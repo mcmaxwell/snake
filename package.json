@@ -1,0 +1,13 @@
+{
+  "name": "snake",
+  "version": "1.0.0",
+  "description": "Snake game with leaderboard",
+  "scripts": {
+    "dev": "vercel dev",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "mongodb": "^7.1.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version 2>/dev/null; npm --version 2>/dev/null)"
+    ]
+  }
+}
