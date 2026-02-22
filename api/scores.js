@@ -8,7 +8,7 @@ async function getCollection() {
     await cachedClient.connect();
   }
   const db = cachedClient.db('snake');
-  const collection = db.collection('scores');
+  const collection = db.collection('leaderboard');
   await collection.createIndex({ score: -1, created_at: 1 });
   return collection;
 }
