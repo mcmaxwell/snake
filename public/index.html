@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bohdan</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+    #link {
+      position: fixed;
+      bottom: 15%;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+    #link a {
+      display: inline-block;
+      padding: 0.8rem 2.5rem;
+      background: rgba(78, 204, 163, 0.15);
+      border: 1px solid rgba(78, 204, 163, 0.4);
+      border-radius: 30px;
+      color: #4ecca3;
+      text-decoration: none;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      font-size: 1.1rem;
+      letter-spacing: 0.15em;
+      transition: all 0.3s;
+    }
+    #link a:hover {
+      background: rgba(78, 204, 163, 0.3);
+      border-color: #4ecca3;
+      box-shadow: 0 0 25px rgba(78, 204, 163, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="link"><a href="/snake/">Play Snake</a></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/geometries/TextGeometry.js"></script>
+  <script>
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.z = 18;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x0a0a1a);
+    document.body.appendChild(renderer.domElement);
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0x334466, 0.8));
+
+    const light1 = new THREE.PointLight(0x4ecca3, 2, 40);
+    light1.position.set(6, 6, 10);
+    scene.add(light1);
+
+    const light2 = new THREE.PointLight(0xe74c8b, 1.5, 40);
+    light2.position.set(-6, -4, 10);
+    scene.add(light2);
+
+    const light3 = new THREE.PointLight(0x5b9ef5, 1.2, 40);
+    light3.position.set(0, 5, 12);
+    scene.add(light3);
+
+    // Starfield — stars fly toward camera
+    const STAR_COUNT = 1500;
+    const STAR_DEPTH = 80;
+    const STAR_SPREAD = 60;
+    const STAR_SPEED = 15;
+    const starGeo = new THREE.BufferGeometry();
+    const starPos = new Float32Array(STAR_COUNT * 3);
+    const starSizes = new Float32Array(STAR_COUNT);
+    for (let i = 0; i < STAR_COUNT; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * STAR_SPREAD;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * STAR_SPREAD;
+      starPos[i * 3 + 2] = -Math.random() * STAR_DEPTH;
+      starSizes[i] = Math.random() * 0.15 + 0.03;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+
+    // Two layers for depth: dim distant + bright close
+    const starMat1 = new THREE.PointsMaterial({
+      color: 0xffffff, size: 0.08, transparent: true, opacity: 0.5
+    });
+    const starMat2 = new THREE.PointsMaterial({
+      color: 0xaaccff, size: 0.15, transparent: true, opacity: 0.8
+    });
+    const stars1 = new THREE.Points(starGeo, starMat1);
+    const stars2 = new THREE.Points(starGeo.clone(), starMat2);
+    scene.add(stars1);
+    scene.add(stars2);
+
+    function updateStars(positions, speed, dt) {
+      const arr = positions.array;
+      for (let i = 0; i < arr.length; i += 3) {
+        arr[i + 2] += speed * dt;
+        if (arr[i + 2] > camera.position.z) {
+          arr[i] = (Math.random() - 0.5) * STAR_SPREAD;
+          arr[i + 1] = (Math.random() - 0.5) * STAR_SPREAD;
+          arr[i + 2] = -STAR_DEPTH;
+        }
+      }
+      positions.needsUpdate = true;
+    }
+
+    // Mouse
+    const mouseNDC = new THREE.Vector2(0, 0);
+    const mouse3D = new THREE.Vector3(0, 0, 0);
+    document.addEventListener('mousemove', (e) => {
+      mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      const v = new THREE.Vector3(mouseNDC.x, mouseNDC.y, 0.5).unproject(camera);
+      const dir = v.sub(camera.position).normalize();
+      mouse3D.copy(camera.position).add(dir.multiplyScalar(-camera.position.z / dir.z));
+    });
+
+    // Load font and create 3D letters
+    const letters = [];
+    const colors = [0x4ecca3, 0x5bf5d0, 0xe74c8b, 0x5b9ef5, 0xffd700, 0xa06cd5];
+
+    const loader = new THREE.FontLoader();
+    loader.load('https://cdn.jsdelivr.net/npm/three@0.128.0/examples/fonts/helvetiker_bold.typeface.json', (font) => {
+      const text = 'BOHDAN';
+      const letterSpacing = 3.2;
+      const startX = -((text.length - 1) * letterSpacing) / 2;
+
+      for (let i = 0; i < text.length; i++) {
+        const geo = new THREE.TextGeometry(text[i], {
+          font: font,
+          size: 2.5,
+          height: 1.0,
+          curveSegments: 20,
+          bevelEnabled: true,
+          bevelThickness: 0.15,
+          bevelSize: 0.1,
+          bevelSegments: 8
+        });
+        geo.computeBoundingBox();
+        geo.center();
+
+        const mat = new THREE.MeshPhongMaterial({
+          color: colors[i],
+          emissive: colors[i],
+          emissiveIntensity: 0.1,
+          shininess: 100,
+          transparent: true,
+          opacity: 0.85,
+          specular: 0xffffff
+        });
+
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.x = startX + i * letterSpacing;
+        mesh.position.y = 0;
+        mesh.position.z = 0;
+
+        mesh.userData = {
+          baseX: mesh.position.x,
+          baseY: 0,
+          phaseX: Math.random() * Math.PI * 2,
+          phaseY: Math.random() * Math.PI * 2,
+          phaseZ: Math.random() * Math.PI * 2,
+        };
+
+        scene.add(mesh);
+        letters.push(mesh);
+      }
+    });
+
+    // Animate
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      letters.forEach((m) => {
+        const d = m.userData;
+
+        // Float
+        const floatX = d.baseX + Math.sin(t * 0.5 + d.phaseX) * 0.3;
+        const floatY = d.baseY + Math.sin(t * 0.7 + d.phaseY) * 0.5;
+        const floatZ = Math.sin(t * 0.4 + d.phaseZ) * 0.3;
+
+        // Mouse push
+        const dx = m.position.x - mouse3D.x;
+        const dy = m.position.y - mouse3D.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        let pushX = 0, pushY = 0;
+        if (dist < 4 && dist > 0.01) {
+          const f = (1 - dist / 4) * 2.0;
+          pushX = (dx / dist) * f;
+          pushY = (dy / dist) * f;
+        }
+
+        m.position.x += (floatX + pushX - m.position.x) * 0.04;
+        m.position.y += (floatY + pushY - m.position.y) * 0.04;
+        m.position.z += (floatZ - m.position.z) * 0.04;
+
+        // Wobble rotation
+        m.rotation.y = Math.sin(t * 0.4 + d.phaseX) * 0.2;
+        m.rotation.x = Math.sin(t * 0.3 + d.phaseY) * 0.12;
+      });
+
+      // Fly through stars
+      const dt = clock.getDelta ? 0.016 : 0.016;
+      updateStars(stars1.geometry.attributes.position, STAR_SPEED, 0.016);
+      updateStars(stars2.geometry.attributes.position, STAR_SPEED * 0.6, 0.016);
+
+      light1.position.x = 6 + Math.sin(t * 0.4) * 3;
+      light2.position.y = -4 + Math.cos(t * 0.35) * 3;
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
