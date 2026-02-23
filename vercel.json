@@ -1,4 +1,7 @@
 {
+  "redirects": [
+    { "source": "/snake", "destination": "/snake/" }
+  ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
