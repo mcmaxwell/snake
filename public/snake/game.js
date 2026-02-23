@@ -324,29 +324,26 @@
     });
   }
 
+  let pendingScore = null;
+
   async function gameOver() {
     running = false;
     clearInterval(gameLoop);
     clearBonusTimers();
     bonus = null;
 
-    const result = await submitScore(playerName, score);
-
-    let msg = `Score: ${score}`;
-    if (result && result.rank) {
-      msg += ` — Rank #${result.rank}`;
-    }
+    pendingScore = score;
 
     overlayTitle.textContent = 'Game Over';
-    overlayMessage.textContent = msg;
-    playerNameInput.style.display = 'none';
-    startBtn.textContent = 'Play Again';
+    overlayMessage.textContent = `Score: ${score}`;
+    playerNameInput.style.display = '';
+    playerNameInput.value = localStorage.getItem('snakePlayerName') || '';
+    startBtn.textContent = 'Submit Score';
     overlay.classList.remove('hidden');
-
-    await fetchLeaderboard();
+    playerNameInput.focus();
   }
 
-  function startGame() {
+  async function submitAndRestart() {
     const name = playerNameInput.value.trim();
     if (!name || !/^[a-zA-Z0-9_]+$/.test(name) || name.length > 20) {
       playerNameInput.style.borderColor = '#e74c3c';
@@ -357,6 +354,26 @@
     currentPlayerName = name;
     localStorage.setItem('snakePlayerName', name);
 
+    startBtn.disabled = true;
+    startBtn.textContent = 'Submitting...';
+
+    const result = await submitScore(name, pendingScore);
+    pendingScore = null;
+
+    let msg = `Score: ${score}`;
+    if (result && result.rank) {
+      msg += ` — Rank #${result.rank}`;
+    }
+
+    overlayMessage.textContent = msg;
+    playerNameInput.style.display = 'none';
+    startBtn.disabled = false;
+    startBtn.textContent = 'Play Again';
+
+    await fetchLeaderboard();
+  }
+
+  function startGame() {
     overlay.classList.add('hidden');
     initGame();
     draw();
@@ -402,7 +419,13 @@
 
   // --- Events ---
 
-  startBtn.addEventListener('click', startGame);
+  startBtn.addEventListener('click', () => {
+    if (pendingScore !== null) {
+      submitAndRestart();
+    } else {
+      startGame();
+    }
+  });
 
   // --- Init ---
 
