@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Capybara Force</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .back-link {
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      z-index: 100;
+      color: #4ecca3;
+      text-decoration: none;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      font-size: 0.95rem;
+      padding: 0.4rem 1rem;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid rgba(78, 204, 163, 0.4);
+      border-radius: 20px;
+      transition: all 0.3s;
+    }
+    .back-link:hover {
+      background: rgba(78, 204, 163, 0.2);
+      border-color: #4ecca3;
+    }
+    iframe {
+      flex: 1;
+      width: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <a href="/" class="back-link">Home</a>
+  <iframe src="https://html-classic.itch.zone/html/15061717/build/index.html" allowfullscreen></iframe>
+</body>
+</html>

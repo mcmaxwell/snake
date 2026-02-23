@@ -17,6 +17,8 @@
       left: 50%;
       transform: translateX(-50%);
       z-index: 10;
+      display: flex;
+      gap: 1.2rem;
     }
     #link a {
       display: inline-block;
@@ -39,7 +41,10 @@
   </style>
 </head>
 <body>
-  <div id="link"><a href="/snake/">Play Snake</a></div>
+  <div id="link">
+    <a href="/snake/">Snake</a>
+    <a href="/capybara-force/">Capybara Force</a>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/FontLoader.js"></script>

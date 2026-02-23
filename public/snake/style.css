@@ -15,6 +15,26 @@ body {
   padding: 2rem 1rem;
 }
 
+.back-link {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 100;
+  color: #4ecca3;
+  text-decoration: none;
+  font-size: 0.95rem;
+  padding: 0.4rem 1rem;
+  background: rgba(26, 26, 46, 0.8);
+  border: 1px solid rgba(78, 204, 163, 0.4);
+  border-radius: 20px;
+  transition: all 0.3s;
+}
+
+.back-link:hover {
+  background: rgba(78, 204, 163, 0.2);
+  border-color: #4ecca3;
+}
+
 .container {
   display: flex;
   gap: 2rem;
