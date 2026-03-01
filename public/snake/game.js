@@ -278,13 +278,14 @@
       const isHead = i === 0;
       let fillColor;
       if (isHead) {
-        fillColor = '#5ff5c8';
+          fillColor = '#39e639'; // Bright green for the head
       } else {
-        const t = snake.length > 1 ? (i - 1) / (snake.length - 1) : 0;
-        const r = Math.round(78 - t * 50);
-        const g = Math.round(204 - t * 140);
-        const b = Math.round(163 - t * 110);
-        fillColor = `rgb(${r},${g},${b})`;
+          const t = snake.length > 1 ? (i - 1) / (snake.length - 1) : 0;
+          // Gradient from bright green to dark green
+          const r = Math.round(57 - t * 20); // 39 to 19
+          const g = Math.round(230 - t * 80); // 230 to 150
+          const b = Math.round(57 - t * 20); // 39 to 19
+          fillColor = `rgb(${r},${g},${b})`;
       }
       ctx.fillStyle = fillColor;
       const padding = 1;
