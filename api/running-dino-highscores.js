@@ -29,7 +29,26 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { daily_high, all_time_high, daily_date, reset_all_time } = req.body || {};
+      const { daily_high, all_time_high, daily_date, reset_all_time, reset_all_highs } = req.body || {};
+
+      if (reset_all_highs === true) {
+        const today = new Date().toISOString().slice(0, 10);
+        const updateDoc = {
+          _id: singletonId,
+          daily_high: 0,
+          all_time_high: 0,
+          daily_date: today,
+          updated_at: new Date()
+        };
+
+        await collection.updateOne(
+          { _id: singletonId },
+          { $set: updateDoc },
+          { upsert: true }
+        );
+
+        return res.status(200).json(updateDoc);
+      }
 
       if (reset_all_time === true) {
         const existing = await collection.findOne({ _id: singletonId });
