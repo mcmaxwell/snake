@@ -9,6 +9,8 @@
   const BONUS_SCORE = 300;
   const BONUS_INTERVAL = 20000; // 20 seconds
   const BONUS_DURATION = 6500;  // 6.5 seconds
+  const SPEED_BOOST_DURATION = 6700;
+  const SPEED_BOOST_PER_PICKUP = 3; // permanent small speed increase (ms per tick)
 
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
@@ -22,16 +24,25 @@
 
   let snake = [];
   let apple = null;
-  let bonus = null; // { x, y }
+  let bonuses = []; // [{ x, y, expiresAt }]
+  let speedBoosts = []; // [{ x, y, expiresAt }]
   let direction = { x: 1, y: 0 };
   let nextDirection = { x: 1, y: 0 };
   let score = 0;
   let applesEaten = 0;
+  let growthLeft = 0;
   let speed = START_SPEED;
   let gameLoop = null;
   let bonusSpawnTimer = null;
-  let bonusExpireTimer = null;
   let running = false;
+  let speedBoostStacks = 0;
+  let nextSpeedBoostScore = 1000;
+  let rKeyDown = false;
+  let dKeyDown = false;
+  let fKeyDown = false;
+  let gKeyDown = false;
+  let fgComboLatched = false;
+  let rdComboLatched = false;
   let playerName = '';
   let currentPlayerName = '';
 
@@ -99,7 +110,8 @@
   function getOccupied() {
     const set = new Set(snake.map(s => `${s.x},${s.y}`));
     if (apple) set.add(`${apple.x},${apple.y}`);
-    if (bonus) set.add(`${bonus.x},${bonus.y}`);
+    for (const b of bonuses) set.add(`${b.x},${b.y}`);
+    for (const sb of speedBoosts) set.add(`${sb.x},${sb.y}`);
     return set;
   }
 
@@ -128,8 +140,18 @@
     nextDirection = { x: 1, y: 0 };
     score = 0;
     applesEaten = 0;
+    growthLeft = 0;
     speed = START_SPEED;
-    bonus = null;
+    bonuses = [];
+    speedBoosts = [];
+    speedBoostStacks = 0;
+    nextSpeedBoostScore = 1000;
+    rKeyDown = false;
+    dKeyDown = false;
+    fKeyDown = false;
+    gKeyDown = false;
+    fgComboLatched = false;
+    rdComboLatched = false;
     scoreDisplay.textContent = '0';
     clearBonusTimers();
     spawnApple();
@@ -147,27 +169,45 @@
   function spawnBonus() {
     const free = getFreeCells();
     if (free.length === 0) return;
-    bonus = free[Math.floor(Math.random() * free.length)];
-    // Bonus disappears after BONUS_DURATION
-    bonusExpireTimer = setTimeout(() => {
-      bonus = null;
-    }, BONUS_DURATION);
+    const spot = free[Math.floor(Math.random() * free.length)];
+    bonuses.push({ ...spot, expiresAt: Date.now() + BONUS_DURATION });
+  }
+
+  function spawnSpeedBoost() {
+    const free = getFreeCells();
+    if (free.length === 0) return;
+    const spot = free[Math.floor(Math.random() * free.length)];
+    speedBoosts.push({ ...spot, expiresAt: Date.now() + SPEED_BOOST_DURATION });
+  }
+
+  function getCurrentTickInterval() {
+    const boosted = speed - (speedBoostStacks * SPEED_BOOST_PER_PICKUP);
+    return Math.max(35, boosted);
+  }
+
+  function restartGameLoop() {
+    if (!running) return;
+    if (gameLoop) clearInterval(gameLoop);
+    gameLoop = setInterval(update, getCurrentTickInterval());
   }
 
   function clearBonusTimers() {
     if (bonusSpawnTimer) { clearInterval(bonusSpawnTimer); bonusSpawnTimer = null; }
-    if (bonusExpireTimer) { clearTimeout(bonusExpireTimer); bonusExpireTimer = null; }
   }
 
   function startBonusCycle() {
     bonusSpawnTimer = setInterval(() => {
-      if (!bonus && running) {
+      if (running) {
         spawnBonus();
       }
     }, BONUS_INTERVAL);
   }
 
   function update() {
+    const now = Date.now();
+    bonuses = bonuses.filter(b => b.expiresAt > now);
+    speedBoosts = speedBoosts.filter(sb => sb.expiresAt > now);
+
     direction = { ...nextDirection };
 
     const head = {
@@ -191,31 +231,44 @@
 
     snake.unshift(head);
 
-    let ate = false;
-
     // Apple eaten
     if (apple && head.x === apple.x && head.y === apple.y) {
       score += APPLE_SCORE;
       applesEaten++;
+      growthLeft += 1;
       scoreDisplay.textContent = score;
       speed = Math.max(MIN_SPEED, START_SPEED - applesEaten * SPEED_DECREASE);
       spawnApple();
-      ate = true;
       // Restart loop with new speed
-      clearInterval(gameLoop);
-      gameLoop = setInterval(update, speed);
+      restartGameLoop();
     }
 
     // Bonus eaten
-    if (bonus && head.x === bonus.x && head.y === bonus.y) {
+    const bonusIndex = bonuses.findIndex(b => head.x === b.x && head.y === b.y);
+    if (bonusIndex >= 0) {
       score += BONUS_SCORE;
+      growthLeft += 3;
       scoreDisplay.textContent = score;
-      bonus = null;
-      if (bonusExpireTimer) { clearTimeout(bonusExpireTimer); bonusExpireTimer = null; }
-      ate = true;
+      bonuses.splice(bonusIndex, 1);
     }
 
-    if (!ate) {
+    // Spawn a speed boost each time score passes a 1000-point milestone.
+    while (score >= nextSpeedBoostScore) {
+        spawnSpeedBoost();
+        nextSpeedBoostScore += 1000;
+    }
+
+    // Speed boost eaten
+    const speedBoostIndex = speedBoosts.findIndex(sb => head.x === sb.x && head.y === sb.y);
+    if (speedBoostIndex >= 0) {
+      speedBoosts.splice(speedBoostIndex, 1);
+      speedBoostStacks += 1;
+      restartGameLoop();
+    }
+
+    if (growthLeft > 0) {
+      growthLeft--;
+    } else {
       snake.pop();
     }
 
@@ -224,6 +277,7 @@
 
   function draw() {
     ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    const animTime = performance.now() / 1000;
 
     // Draw grid lines (subtle)
     ctx.strokeStyle = '#1a2240';
@@ -241,36 +295,179 @@
 
     // Draw apple
     if (apple) {
-      ctx.fillStyle = '#e74c3c';
-      ctx.beginPath();
       const cx = apple.x * CELL_SIZE + CELL_SIZE / 2;
       const cy = apple.y * CELL_SIZE + CELL_SIZE / 2;
-      ctx.arc(cx, cy, CELL_SIZE / 2 - 2, 0, Math.PI * 2);
+      const pulse = 0.88 + Math.sin(animTime * 5.2) * 0.12;
+      const r = (CELL_SIZE / 2 - 2) * pulse;
+
+      ctx.save();
+      // Soft glow pulse around apple.
+      ctx.globalAlpha = 0.25 + Math.abs(Math.sin(animTime * 5.2)) * 0.2;
+      ctx.fillStyle = '#ff6b5e';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
       ctx.fill();
+
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#e74c3c';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Stem
+      ctx.fillStyle = '#5a3b1f';
+      ctx.fillRect(cx - 1, cy - r - 2, 2, 5);
+
+      // Leaf
+      ctx.fillStyle = '#4caf50';
+      ctx.beginPath();
+      ctx.ellipse(cx + 4, cy - r + 1, 4, 2.2, -0.45, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Tiny highlight so pulse reads better.
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.beginPath();
+      ctx.arc(cx - r * 0.32, cy - r * 0.32, Math.max(2, r * 0.22), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
-    // Draw bonus (golden star-like diamond)
-    if (bonus) {
+    // Draw bonus (animated golden star)
+    for (const bonus of bonuses) {
       const bx = bonus.x * CELL_SIZE + CELL_SIZE / 2;
       const by = bonus.y * CELL_SIZE + CELL_SIZE / 2;
-      const r = CELL_SIZE / 2 - 2;
-      ctx.fillStyle = '#ffd700';
+      const spin = animTime * 4.2;
+      const pulse = 0.82 + Math.abs(Math.sin(animTime * 6.4)) * 0.24;
+      const outerR = (CELL_SIZE / 2 - 2) * pulse;
+      const innerR = outerR * 0.48;
+
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(spin);
+
+      // Glow effect
+      ctx.globalAlpha = 0.4 + Math.abs(Math.sin(animTime * 6.4)) * 0.25;
+      ctx.fillStyle = '#ffe55a';
       ctx.beginPath();
-      ctx.moveTo(bx, by - r);
-      ctx.lineTo(bx + r * 0.6, by - r * 0.3);
-      ctx.lineTo(bx + r, by);
-      ctx.lineTo(bx + r * 0.6, by + r * 0.3);
-      ctx.lineTo(bx, by + r);
-      ctx.lineTo(bx - r * 0.6, by + r * 0.3);
-      ctx.lineTo(bx - r, by);
-      ctx.lineTo(bx - r * 0.6, by - r * 0.3);
+      for (let i = 0; i < 8; i++) {
+        const angle = (-Math.PI / 2) + i * (Math.PI / 4);
+        const rr = i % 2 === 0 ? outerR + 2 : innerR + 2;
+        const x = Math.cos(angle) * rr;
+        const y = Math.sin(angle) * rr;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
       ctx.closePath();
       ctx.fill();
-      // Glow effect
-      ctx.shadowColor = '#ffd700';
-      ctx.shadowBlur = 8;
+
+      // Core star
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const angle = (-Math.PI / 2) + i * (Math.PI / 4);
+        const rr = i % 2 === 0 ? outerR : innerR;
+        const x = Math.cos(angle) * rr;
+        const y = Math.sin(angle) * rr;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
       ctx.fill();
-      ctx.shadowBlur = 0;
+
+      // Bright center sparkle
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.beginPath();
+      ctx.arc(-outerR * 0.12, -outerR * 0.12, Math.max(1.6, outerR * 0.2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Draw speed boost (Mercury-inspired winged boot with blue/yellow outline)
+    for (const speedBoost of speedBoosts) {
+      const sx = speedBoost.x * CELL_SIZE + CELL_SIZE / 2;
+      const sy = speedBoost.y * CELL_SIZE + CELL_SIZE / 2;
+      const flap = Math.sin(animTime * 10) * 1.8;
+      const bob = Math.sin(animTime * 4.8 + speedBoost.x * 0.7) * 1.2;
+
+      ctx.save();
+      ctx.translate(sx, sy + bob);
+      ctx.rotate(-0.1 + Math.sin(animTime * 3.6) * 0.03);
+
+      // Wing glow aura
+      ctx.globalAlpha = 0.25 + Math.abs(Math.sin(animTime * 8)) * 0.2;
+      ctx.fillStyle = '#8ac6ff';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, CELL_SIZE * 0.52, CELL_SIZE * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // Sandal boot body (Mercury vibe)
+      ctx.fillStyle = '#6fb8ff';
+      ctx.strokeStyle = '#ffd84d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-7, -5);
+      ctx.lineTo(2, -6);
+      ctx.lineTo(7, -3);
+      ctx.lineTo(8, 1);
+      ctx.lineTo(6, 5);
+      ctx.lineTo(1, 6);
+      ctx.lineTo(-8, 5);
+      ctx.lineTo(-9, 1);
+      ctx.lineTo(-8, -2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Sole + strap accents
+      ctx.fillStyle = '#2f7fd4';
+      ctx.fillRect(-8, 4, 14, 2);
+      ctx.strokeStyle = '#ffe680';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-5, -2);
+      ctx.lineTo(4, -2.5);
+      ctx.moveTo(-4, 0.5);
+      ctx.lineTo(5, 0);
+      ctx.stroke();
+
+      // Wing (left)
+      ctx.fillStyle = '#dff3ff';
+      ctx.strokeStyle = '#ffd84d';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-8, -1);
+      ctx.lineTo(-13 - flap * 0.8, -5);
+      ctx.lineTo(-12 - flap * 0.4, -1);
+      ctx.lineTo(-15 - flap * 1.1, 2);
+      ctx.lineTo(-9, 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Wing (right, smaller hint)
+      ctx.beginPath();
+      ctx.moveTo(4, -2);
+      ctx.lineTo(7 + flap * 0.5, -4);
+      ctx.lineTo(6 + flap * 0.25, -1);
+      ctx.lineTo(8 + flap * 0.7, 1);
+      ctx.lineTo(5, 1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Wing feather detail
+      ctx.strokeStyle = '#8abfff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-10, -1);
+      ctx.lineTo(-13 - flap * 0.7, -3);
+      ctx.moveTo(-10, 1);
+      ctx.lineTo(-13 - flap * 0.7, 1);
+      ctx.stroke();
+
+      ctx.restore();
     }
 
     // Draw snake (gradient: bright head → darker tail)
@@ -328,7 +525,9 @@
     running = false;
     clearInterval(gameLoop);
     clearBonusTimers();
-    bonus = null;
+    bonuses = [];
+    speedBoosts = [];
+    speedBoostStacks = 0;
 
     pendingScore = score;
 
@@ -376,7 +575,7 @@
     initGame();
     draw();
     running = true;
-    gameLoop = setInterval(update, speed);
+    gameLoop = setInterval(update, getCurrentTickInterval());
     startBonusCycle();
   }
 
@@ -388,6 +587,24 @@
         startBtn.click();
       }
       return;
+    }
+
+    const lower = e.key.toLowerCase();
+    if (lower === 'r') rKeyDown = true;
+    if (lower === 'd') dKeyDown = true;
+    if (lower === 'f') fKeyDown = true;
+    if (lower === 'g') gKeyDown = true;
+
+    // Hidden combo: F+G spawns a bonus star immediately.
+    if (fKeyDown && gKeyDown && !fgComboLatched) {
+      fgComboLatched = true;
+      spawnBonus();
+    }
+
+    // Hidden combo: R+D spawns a speed boost immediately.
+    if (rKeyDown && dKeyDown && !rdComboLatched) {
+      rdComboLatched = true;
+      spawnSpeedBoost();
     }
 
     const key = e.key;
@@ -413,6 +630,16 @@
     }
 
     nextDirection = newDir;
+  });
+
+  document.addEventListener('keyup', (e) => {
+    const lower = e.key.toLowerCase();
+    if (lower === 'r') rKeyDown = false;
+    if (lower === 'd') dKeyDown = false;
+    if (lower === 'f') fKeyDown = false;
+    if (lower === 'g') gKeyDown = false;
+    if (!fKeyDown || !gKeyDown) fgComboLatched = false;
+    if (!rKeyDown || !dKeyDown) rdComboLatched = false;
   });
 
   // --- Events ---
