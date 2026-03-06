@@ -14,6 +14,23 @@
       align-items: center;
       justify-content: center;
     }
+    #home-btn {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 20;
+      padding: 10px 14px;
+      border: 2px solid #000;
+      border-radius: 8px;
+      background: #fff;
+      color: #111;
+      font: 700 14px/1 sans-serif;
+      text-decoration: none;
+      box-shadow: 0 2px 0 #000;
+    }
+    #home-btn:hover {
+      background: #f0f0f0;
+    }
     canvas {
       display: block;
       width: min(960px, 82vw);
@@ -33,6 +50,7 @@
   </style>
 </head>
 <body>
+  <a id="home-btn" href="/">Home</a>
   <canvas id="game-canvas"></canvas>
   <div id="overlay">Press Space to Start</div>
   <script src="game.js"></script>
