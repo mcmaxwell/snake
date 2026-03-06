@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Running Dino</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      overflow: hidden;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    canvas {
+      display: block;
+      width: min(960px, 82vw);
+      height: min(540px, 72vh);
+      background: #fff;
+      border: 2px solid #000;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.5);
+      color: #fff; font-family: sans-serif; font-size: 2rem;
+      cursor: pointer;
+    }
+    #overlay.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+  <div id="overlay">Press Space to Start</div>
+  <script src="game.js"></script>
+</body>
+</html>
