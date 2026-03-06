@@ -8,6 +8,7 @@
   const OBSTACLE_INTERVAL = 85; // frames between obstacles (more frequent)
   const OBSTACLE_SPEED = 5.4;
   const DASH_SPEED_MULT = 2;
+  const SCORE_BASE_RATE_PER_TICK = 0.08; // score units per 10ms at normal walking pace
   const PLAYER_START_X = 64;
   const MAX_GAME_WIDTH = 960;
   const MAX_GAME_HEIGHT = 540;
@@ -17,7 +18,7 @@
   const DASH_TRAIL_LONG = 14;
   const DASH_TRAIL_SPAWN_RATE = 2; // lower is denser trail
   const GROUND_HEIGHT = 5;
-  const END_SCORE = 268415;
+  const END_SCORE = 314211;
   const END_TITLE_DURATION_MS = 6700;
   const END_CAR_APPROACH_MS = 2200;
   const END_CAR_STOP_MS = 1600;
@@ -25,6 +26,8 @@
   const END_DROP_CAR_STOP_MS = 1000;
   const END_DROP_CAR_EXIT_SPEED = S(5.5);
   const PAPERWORK_MODE_SCORE = 2000;
+  const COOKIE_MODE_SCORE = 4000;
+  const GHOST_OBSTACLE_MODE_SCORE = 6000;
   const FLYING_SWARM_SCORE = 1500;
   const DEATH_EXPLOSION_MS = 900;
   const END_CAR_W = S(126);
@@ -39,9 +42,12 @@
   const DINO_HIGHS_API_URL = '/api/running-dino-highscores';
   const PLAYER_STAND_HEIGHT = S(60);
   const PLAYER_DUCK_HEIGHT = S(38);
-  const GHOST_FLOAT_FROM_GROUND = S(44);
+  const GHOST_FLOAT_FROM_GROUND = S(62);
   const GHOST_EXIT_GRACE_MS = 5000;
   const MODE_SWITCH_ANIM_MS = 700;
+  const SUPER_GHOST_TRANSFORM_MS = 650;
+  const SUPER_GHOST_SPEED_MULT = 10;
+  const ULTRA_SUPER_GHOST_SPEED_MULT = SUPER_GHOST_SPEED_MULT * 10;
   const DINO_SPECIES = [
     { name: 'Tyrannosaurus rex', archetype: 'theropod' },
     { name: 'Triceratops', archetype: 'horned' },
@@ -78,6 +84,7 @@
   let score = 0;
   let scoreTimer = null;
   let scoreTick = 0;
+  let scoreAccumulator = 0;
   let dailyHighScore = 0;
   let allTimeHighScore = 0;
   let highScoreSyncTimer = null;
@@ -101,15 +108,22 @@
   let dropCarStartX = 0;
   let dropCarStopX = 0;
   let dropCarHasPlayer = true;
+  let iKeyDown = false;
+  let nKeyDown = false;
   let gKeyDown = false;
   let hKeyDown = false;
   let fKeyDown = false;
-  let gfComboLatched = false;
+  let rKeyDown = false;
   let ghostMode = false;
+  let superGhostMode = false;
+  let ultraSuperGhostMode = false;
+  let inComboLatched = false;
   let ghComboLatched = false;
+  let frComboLatched = false;
   let ghostGraceUntilMs = 0;
   let modeSwitchAnimStartMs = 0;
   let modeSwitchAnimType = null;
+  let superGhostTransformStartMs = 0;
   let flyingSwarmTriggered = false;
   let bKeyDown = false;
   let lKeyDown = false;
@@ -197,12 +211,12 @@
     }
   }
 
-  async function resetAllTimeHighInDb() {
+  async function resetAllHighsInDb() {
     try {
       await fetch(DINO_HIGHS_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reset_all_time: true })
+        body: JSON.stringify({ reset_all_highs: true })
       });
     } catch {
       // Keep local reset; DB can sync later if unavailable.
@@ -353,7 +367,7 @@
     darkPhaseTimer = setTimeout(() => {
       darkPhaseActive = false;
       darkPhaseTimer = null;
-    }, 10000);
+    }, 4000);
   }
 
   function getSpeciesSizeClass(species) {
@@ -391,7 +405,11 @@
   function getCurrentSpeedMultiplier() {
     let mult = isDashing ? DASH_SPEED_MULT : 1;
     if (ghostMode && isDashing) {
-      mult *= 2;
+      if (ultraSuperGhostMode) {
+        mult = ULTRA_SUPER_GHOST_SPEED_MULT;
+      } else if (superGhostMode) {
+        mult = SUPER_GHOST_SPEED_MULT;
+      }
     }
     return mult;
   }
@@ -558,7 +576,9 @@
 
     const hidePlayer = (endSequenceActive && !endPlayerVisible) || deathExploding || playerRespawnPending;
     const graceActive = Date.now() < ghostGraceUntilMs;
-    const playerDrawColor = ghostMode ? 'rgba(165,165,165,0.65)' : '#000';
+    const playerDrawColor = ghostMode
+      ? ((superGhostMode || ultraSuperGhostMode) ? '#000' : 'rgba(165,165,165,0.65)')
+      : '#000';
     if (!hidePlayer) {
       if (graceActive) {
         const t = (Date.now() % 1000) / 1000;
@@ -582,16 +602,27 @@
 
         ctx.save();
 
+        const poweredGhost = superGhostMode || ultraSuperGhostMode;
+
         // Soft aura pulse around the player body.
-        ctx.globalAlpha = 0.2 + pulse * 0.14;
-        ctx.fillStyle = '#d7d7d7';
+        ctx.globalAlpha = (poweredGhost ? (ultraSuperGhostMode ? 0.4 : 0.34) : 0.2)
+          + pulse * (poweredGhost ? (ultraSuperGhostMode ? 0.24 : 0.2) : 0.14);
+        ctx.fillStyle = poweredGhost ? '#ffeb3b' : '#d7d7d7';
         ctx.beginPath();
-        ctx.ellipse(coreX, coreY, S(16) + pulse * S(2), S(26) + pulse * S(4), 0, 0, Math.PI * 2);
+        ctx.ellipse(
+          coreX,
+          coreY,
+          S(16) + pulse * S(poweredGhost ? (ultraSuperGhostMode ? 7 : 5) : 2),
+          S(26) + pulse * S(poweredGhost ? (ultraSuperGhostMode ? 9 : 7) : 4),
+          0,
+          0,
+          Math.PI * 2
+        );
         ctx.fill();
 
         // Small wisps under the ghost to make hovering motion readable.
         ctx.globalAlpha = 0.22 + pulse * 0.12;
-        ctx.fillStyle = '#cfcfcf';
+        ctx.fillStyle = poweredGhost ? '#ffe66d' : '#cfcfcf';
         for (let i = 0; i < 3; i++) {
           const t = stepPhase * 2 + i * 1.4;
           const wispX = player.x + S(5) + i * S(6) + Math.sin(t) * S(1.2);
@@ -604,6 +635,42 @@
         }
 
         ctx.restore();
+      }
+
+      if (superGhostTransformStartMs > 0) {
+        const elapsed = Date.now() - superGhostTransformStartMs;
+        if (elapsed < SUPER_GHOST_TRANSFORM_MS) {
+          const life = elapsed / SUPER_GHOST_TRANSFORM_MS;
+          const centerX = player.x + player.width * 0.5;
+          const centerY = player.y + player.height * 0.58;
+
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, 0.8 - life * 0.8);
+          ctx.strokeStyle = '#9cd4ff';
+          ctx.lineWidth = S(2);
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, S(14) + life * S(26), 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, S(8) + life * S(16), 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = '#f0f7ff';
+          for (let i = 0; i < 4; i++) {
+            const angle = life * Math.PI * 2 + i * (Math.PI / 2);
+            const x1 = centerX + Math.cos(angle) * (S(6) + life * S(10));
+            const y1 = centerY + Math.sin(angle) * (S(6) + life * S(10));
+            const x2 = centerX + Math.cos(angle) * (S(12) + life * S(16));
+            const y2 = centerY + Math.sin(angle) * (S(12) + life * S(16));
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          }
+          ctx.restore();
+        } else {
+          superGhostTransformStartMs = 0;
+        }
       }
 
       if (modeSwitchAnimType && modeSwitchAnimStartMs > 0) {
@@ -671,7 +738,8 @@
       const armY = player.y + S(10);
       const armLength = S(16);
       const armWidth = S(5);
-      const inAir = player.y < CANVAS_HEIGHT - player.height;
+      // Powered ghost tiers should visually run in the air instead of using jump/fall poses.
+      const inAir = (ghostMode && (superGhostMode || ultraSuperGhostMode)) ? false : (player.y < CANVAS_HEIGHT - player.height);
 
       if (inAir) {
         const rising = player.vy < -1;
@@ -727,95 +795,468 @@
         }
       }
 
-      // dash trail animation drawing
-      const dashPulse = 1 + Math.abs(Math.sin(stepPhase * 2.5));
-      ctx.strokeStyle = ghostMode ? 'rgba(170,170,170,0.7)' : '#000';
-      ctx.lineWidth = isDashing ? (1.5 + dashPulse) : 2;
-      for (const t of dashTrails) {
-        ctx.globalAlpha = t.alpha;
+      if (ghostMode && (superGhostMode || ultraSuperGhostMode) && isDashing) {
+        // Powered ghost tiers use electric streaks instead of normal dash marks.
+        const coreX = player.x - S(3);
+        const coreY = player.y + player.height * 0.55;
+        const boltCount = ultraSuperGhostMode ? 12 : 9;
+
+        // Electric cloud glow behind the runner.
+        ctx.save();
+        const glowPulse = (Math.sin(stepPhase * 5.8) + 1) * 0.5;
+        ctx.globalAlpha = ultraSuperGhostMode ? (0.3 + glowPulse * 0.24) : (0.22 + glowPulse * 0.2);
+        ctx.fillStyle = '#ffeb3b';
         ctx.beginPath();
-        ctx.moveTo(t.x, t.y);
-        ctx.lineTo(t.x - t.len, t.y);
-        ctx.stroke();
+        ctx.ellipse(
+          coreX - S(10),
+          coreY,
+          (ultraSuperGhostMode ? S(28) : S(22)) + glowPulse * S(7),
+          (ultraSuperGhostMode ? S(22) : S(18)) + glowPulse * S(5),
+          0,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+        ctx.restore();
+
+        for (let i = 0; i < boltCount; i++) {
+          const wave = Math.sin(stepPhase * 8.2 + i * 1.5);
+          const alpha = (ultraSuperGhostMode ? 0.5 : 0.42) + Math.abs(wave) * 0.48;
+          const yOffset = (i - 4) * S(4.1) + Math.sin(stepPhase * 5.2 + i * 0.9) * S(1.8);
+          const len = S(18) + Math.abs(Math.sin(stepPhase * 7 + i * 1.1)) * (ultraSuperGhostMode ? S(20) : S(14));
+          const speedDrag = S(4) + Math.abs(Math.cos(stepPhase * 6.8 + i)) * S(4);
+
+          ctx.save();
+
+          // Outer glow stroke (faster dash-mark look).
+          ctx.globalAlpha = alpha * 0.55;
+          ctx.strokeStyle = '#fff59d';
+          ctx.lineWidth = ultraSuperGhostMode ? S(4.4) : S(3.8);
+          ctx.beginPath();
+          ctx.moveTo(coreX, coreY + yOffset);
+          ctx.lineTo(coreX - len, coreY + yOffset - S(0.4));
+          ctx.stroke();
+
+          // Bright center stroke.
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = '#fffde7';
+          ctx.lineWidth = ultraSuperGhostMode ? S(2.4) : S(2);
+          ctx.beginPath();
+          ctx.moveTo(coreX, coreY + yOffset);
+          ctx.lineTo(coreX - len, coreY + yOffset - S(0.3));
+          ctx.stroke();
+
+          // Yellow energetic core.
+          ctx.strokeStyle = '#ffd600';
+          ctx.lineWidth = ultraSuperGhostMode ? S(1.5) : S(1.25);
+          ctx.beginPath();
+          ctx.moveTo(coreX - S(1), coreY + yOffset);
+          ctx.lineTo(coreX - len + S(1), coreY + yOffset - S(0.2));
+          ctx.stroke();
+
+          // Faded continuation tail to exaggerate speed.
+          ctx.globalAlpha = alpha * 0.35;
+          ctx.strokeStyle = '#fff9c4';
+          ctx.lineWidth = S(1.4);
+          ctx.beginPath();
+          ctx.moveTo(coreX - len, coreY + yOffset - S(0.3));
+          ctx.lineTo(coreX - len - speedDrag, coreY + yOffset - S(0.3));
+          ctx.stroke();
+
+          // Tiny spark tails near the end of each dash mark for motion richness.
+          if (Math.sin(stepPhase * 8.8 + i * 1.5) > -0.15) {
+            const tailX = coreX - len;
+            ctx.strokeStyle = '#fff176';
+            ctx.lineWidth = ultraSuperGhostMode ? 1.2 : 1;
+            ctx.beginPath();
+            ctx.moveTo(tailX, coreY + yOffset);
+            ctx.lineTo(tailX - S(4), coreY + yOffset - S(2));
+            ctx.moveTo(tailX, coreY + yOffset);
+            ctx.lineTo(tailX - S(4), coreY + yOffset + S(2));
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        }
+
+        // Air-run effect: faint energy steps below the feet while dashing in super ghost.
+        const stepY = player.y + player.height + S(4);
+        for (let i = 0; i < (ultraSuperGhostMode ? 5 : 3); i++) {
+          const phase = stepPhase * 3.4 + i * 0.9;
+          const px = player.x - S(12) - i * S(8) + Math.sin(phase) * S(2);
+          const py = stepY + Math.cos(phase) * S(2);
+          ctx.save();
+          ctx.globalAlpha = (ultraSuperGhostMode ? 0.42 : 0.34) + Math.abs(Math.sin(phase)) * 0.28;
+          ctx.fillStyle = '#ffeb3b';
+          ctx.beginPath();
+          ctx.ellipse(px, py, S(6), S(2), 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      } else {
+        // dash trail animation drawing
+        const dashPulse = 1 + Math.abs(Math.sin(stepPhase * 2.5));
+        ctx.strokeStyle = ghostMode ? 'rgba(170,170,170,0.7)' : '#000';
+        ctx.lineWidth = isDashing ? (1.5 + dashPulse) : 2;
+        for (const t of dashTrails) {
+          ctx.globalAlpha = t.alpha;
+          ctx.beginPath();
+          ctx.moveTo(t.x, t.y);
+          ctx.lineTo(t.x - t.len, t.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
     }
 
     // obstacles: animated dinosaur sprites (facing the player)
     obstacles.forEach(o => {
-      if (score >= PAPERWORK_MODE_SCORE) {
-        const bob = Math.sin(stepPhase * 3 + o.phase) * S(2.2);
-        const bodyW = Math.max(S(34), Math.floor(o.width * 0.66));
-        const bodyH = Math.max(S(44), Math.floor(o.height * 0.7));
-        const bodyX = o.x + (o.width - bodyW) * 0.5;
-        const bodyY = o.y + (o.height - bodyH) * 0.5 + bob;
+      if (score >= GHOST_OBSTACLE_MODE_SCORE) {
+        const bob = Math.sin(stepPhase * 2.4 + o.phase) * S(2.4);
+        const centerX = o.x + o.width * 0.5;
+        const centerY = o.y + o.height * 0.5 + bob;
+        const ghostW = Math.max(S(30), Math.floor(o.width * 0.62));
+        const ghostH = Math.max(S(42), Math.floor(o.height * 0.78));
 
-        // shadow
+        // Ground shadow.
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath();
+        ctx.ellipse(centerX, CANVAS_HEIGHT - S(6), ghostW * 0.42, S(4), 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+
+        // Ghost body.
+        ctx.fillStyle = '#e9f3ff';
+        ctx.beginPath();
+        ctx.moveTo(-ghostW * 0.5, ghostH * 0.2);
+        ctx.lineTo(-ghostW * 0.5, -ghostH * 0.1);
+        ctx.bezierCurveTo(-ghostW * 0.5, -ghostH * 0.5, ghostW * 0.5, -ghostH * 0.5, ghostW * 0.5, -ghostH * 0.1);
+        ctx.lineTo(ghostW * 0.5, ghostH * 0.2);
+        // wavy skirt edge
+        ctx.lineTo(ghostW * 0.32, ghostH * 0.12 + Math.sin(stepPhase * 4 + o.phase) * S(2));
+        ctx.lineTo(ghostW * 0.14, ghostH * 0.24 + Math.sin(stepPhase * 4.5 + o.phase) * S(2));
+        ctx.lineTo(-ghostW * 0.04, ghostH * 0.12 + Math.sin(stepPhase * 5 + o.phase) * S(2));
+        ctx.lineTo(-ghostW * 0.22, ghostH * 0.24 + Math.sin(stepPhase * 5.5 + o.phase) * S(2));
+        ctx.lineTo(-ghostW * 0.4, ghostH * 0.12 + Math.sin(stepPhase * 6 + o.phase) * S(2));
+        ctx.closePath();
+        ctx.fill();
+
+        // Glow aura.
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = '#b8dfff';
+        ctx.beginPath();
+        ctx.ellipse(0, -ghostH * 0.06, ghostW * 0.72, ghostH * 0.62, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // Face.
+        const blink = Math.sin(stepPhase * 6 + o.phase) > 0.94;
+        ctx.fillStyle = '#1f2a38';
+        if (blink) {
+          ctx.fillRect(-ghostW * 0.2, -ghostH * 0.13, S(6), S(1));
+          ctx.fillRect(ghostW * 0.07, -ghostH * 0.13, S(6), S(1));
+        } else {
+          ctx.beginPath();
+          ctx.ellipse(-ghostW * 0.14, -ghostH * 0.1, S(3), S(5), 0, 0, Math.PI * 2);
+          ctx.ellipse(ghostW * 0.14, -ghostH * 0.1, S(3), S(5), 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.ellipse(0, ghostH * 0.03, S(5), S(4), 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+        return;
+      }
+
+      if (score >= COOKIE_MODE_SCORE) {
+        const bob = Math.sin(stepPhase * 2.9 + o.phase) * S(1.4);
+        const centerX = o.x + o.width * 0.5;
+        const centerY = o.y + o.height * 0.53 + bob;
+        const radius = Math.max(S(20), Math.floor(Math.min(o.width, o.height) * 0.36));
+
+        // Ground shadow.
         ctx.fillStyle = 'rgba(0,0,0,0.22)';
         ctx.beginPath();
-        ctx.ellipse(bodyX + bodyW * 0.5, CANVAS_HEIGHT - S(6), bodyW * 0.44, S(5), 0, 0, Math.PI * 2);
+        ctx.ellipse(centerX, CANVAS_HEIGHT - S(6), radius * 0.9, S(5), 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // folded paper body
-        ctx.fillStyle = '#f2f2ed';
-        ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
-        ctx.strokeStyle = '#b7b7b0';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bodyX, bodyY, bodyW, bodyH);
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(Math.sin(stepPhase * 1.8 + o.phase) * 0.06);
 
-        // diagonal fold accents
-        ctx.strokeStyle = '#d0d0c8';
+        // Cookie base.
+        ctx.fillStyle = '#c78f52';
         ctx.beginPath();
-        ctx.moveTo(bodyX + S(4), bodyY + S(7));
-        ctx.lineTo(bodyX + bodyW - S(6), bodyY + S(2));
-        ctx.moveTo(bodyX + S(3), bodyY + bodyH - S(9));
-        ctx.lineTo(bodyX + bodyW - S(4), bodyY + bodyH - S(4));
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Toasted edge for depth.
+        ctx.strokeStyle = '#9a6535';
+        ctx.lineWidth = S(2);
+        ctx.beginPath();
+        ctx.arc(0, 0, radius - S(1), 0, Math.PI * 2);
         ctx.stroke();
 
-        // ninja hood band
-        const bandY = bodyY + S(14) + Math.sin(stepPhase * 4 + o.phase) * S(1);
-        ctx.fillStyle = '#2f2f36';
-        ctx.fillRect(bodyX + S(2), bandY, bodyW - S(4), S(10));
-
-        // eyes blink animation
-        const blink = Math.sin(stepPhase * 5 + o.phase) > 0.9;
-        ctx.fillStyle = '#d8f3ff';
-        if (blink) {
-          ctx.fillRect(bodyX + S(11), bandY + S(4), S(6), S(1));
-          ctx.fillRect(bodyX + bodyW - S(17), bandY + S(4), S(6), S(1));
-        } else {
-          ctx.fillRect(bodyX + S(11), bandY + S(3), S(6), S(3));
-          ctx.fillRect(bodyX + bodyW - S(17), bandY + S(3), S(6), S(3));
+        // Chocolate chips.
+        const chipColor = '#5a3a27';
+        const chips = [
+          { x: -0.42, y: -0.28, r: 0.12 },
+          { x: 0.2, y: -0.4, r: 0.1 },
+          { x: 0.48, y: -0.08, r: 0.1 },
+          { x: -0.28, y: 0.04, r: 0.09 },
+          { x: 0.02, y: 0.42, r: 0.11 },
+          { x: -0.5, y: 0.28, r: 0.09 }
+        ];
+        ctx.fillStyle = chipColor;
+        for (const chip of chips) {
+          ctx.beginPath();
+          ctx.arc(chip.x * radius, chip.y * radius, Math.max(S(2), radius * chip.r), 0, Math.PI * 2);
+          ctx.fill();
         }
 
-        // animated side flaps/arms
-        const armSwing = Math.sin(stepPhase * 4 + o.phase) * S(4);
-        ctx.fillStyle = '#e7e7e1';
-        ctx.fillRect(bodyX - S(5) + armSwing * 0.3, bodyY + S(22), S(7), S(14));
-        ctx.fillRect(bodyX + bodyW - S(2) - armSwing * 0.3, bodyY + S(20), S(7), S(14));
+        // Angry face: heavy inward brows, mean eyes, and a snarling mouth.
+        const eyeBlink = Math.sin(stepPhase * 6 + o.phase) > 0.95;
+        ctx.strokeStyle = '#160a07';
+        ctx.lineWidth = S(2);
 
-        // spinning paper shuriken near the ninja
-        const starCx = bodyX + bodyW + S(10);
-        const starCy = bodyY + S(16) + Math.sin(stepPhase * 6 + o.phase) * S(2);
-        const spin = stepPhase * 0.45 + o.phase;
-        ctx.save();
-        ctx.translate(starCx, starCy);
-        ctx.rotate(spin);
-        ctx.fillStyle = '#f5f5ef';
+        // Thick angry eyebrows.
         ctx.beginPath();
-        for (let i = 0; i < 4; i++) {
-          ctx.rotate(Math.PI / 2);
-          ctx.moveTo(0, 0);
-          ctx.lineTo(S(7), S(2));
-          ctx.lineTo(S(2), 0);
-        }
-        ctx.fill();
-        ctx.restore();
+        ctx.moveTo(-radius * 0.5, -radius * 0.34);
+        ctx.lineTo(-radius * 0.16, -radius * 0.24);
+        ctx.moveTo(radius * 0.16, -radius * 0.24);
+        ctx.lineTo(radius * 0.5, -radius * 0.34);
+        ctx.stroke();
 
-        // little feet tabs
-        ctx.fillStyle = '#c9c9c2';
-        ctx.fillRect(bodyX + S(7), bodyY + bodyH - S(2), S(7), S(4));
-        ctx.fillRect(bodyX + bodyW - S(14), bodyY + bodyH - S(2), S(7), S(4));
+        if (eyeBlink) {
+          ctx.beginPath();
+          ctx.moveTo(-radius * 0.43, -radius * 0.12);
+          ctx.lineTo(-radius * 0.17, -radius * 0.21);
+          ctx.moveTo(radius * 0.17, -radius * 0.21);
+          ctx.lineTo(radius * 0.43, -radius * 0.12);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(-radius * 0.46, -radius * 0.03);
+          ctx.lineTo(-radius * 0.18, -radius * 0.27);
+          ctx.moveTo(radius * 0.18, -radius * 0.27);
+          ctx.lineTo(radius * 0.46, -radius * 0.03);
+          ctx.stroke();
+
+          // Small red pupils for a more hostile expression.
+          ctx.fillStyle = '#1d0c08';
+          ctx.beginPath();
+          ctx.arc(-radius * 0.31, -radius * 0.17, Math.max(S(2), radius * 0.065), 0, Math.PI * 2);
+          ctx.arc(radius * 0.31, -radius * 0.17, Math.max(S(2), radius * 0.065), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#b71c1c';
+          ctx.beginPath();
+          ctx.arc(-radius * 0.31, -radius * 0.17, Math.max(S(1), radius * 0.03), 0, Math.PI * 2);
+          ctx.arc(radius * 0.31, -radius * 0.17, Math.max(S(1), radius * 0.03), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        const jawPulse = Math.sin(stepPhase * 4.2 + o.phase) * radius * 0.03;
+        ctx.fillStyle = '#2b120b';
+        ctx.beginPath();
+        ctx.moveTo(-radius * 0.46, radius * 0.17 + jawPulse);
+        ctx.lineTo(-radius * 0.3, radius * 0.28 + jawPulse);
+        ctx.lineTo(-radius * 0.16, radius * 0.2 + jawPulse);
+        ctx.lineTo(0, radius * 0.31 + jawPulse);
+        ctx.lineTo(radius * 0.16, radius * 0.2 + jawPulse);
+        ctx.lineTo(radius * 0.3, radius * 0.28 + jawPulse);
+        ctx.lineTo(radius * 0.46, radius * 0.17 + jawPulse);
+        ctx.lineTo(radius * 0.41, radius * 0.45 + jawPulse);
+        ctx.lineTo(-radius * 0.41, radius * 0.45 + jawPulse);
+        ctx.closePath();
+        ctx.fill();
+
+        // Sharp fangs/teeth.
+        ctx.fillStyle = '#f5e8db';
+        for (let i = -2; i <= 2; i++) {
+          const tx = i * radius * 0.14;
+          ctx.beginPath();
+          ctx.moveTo(tx - S(3), radius * 0.22 + jawPulse);
+          ctx.lineTo(tx + S(3), radius * 0.22 + jawPulse);
+          ctx.lineTo(tx, radius * 0.31 + jawPulse);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.restore();
+        return;
+      }
+
+      if (score >= PAPERWORK_MODE_SCORE) {
+        const bob = Math.sin(stepPhase * 2.7 + o.phase) * S(1.8);
+        const bodyW = Math.max(S(36), Math.floor(o.width * 0.68));
+        const bodyH = Math.max(S(46), Math.floor(o.height * 0.74));
+        const centerX = o.x + o.width * 0.5;
+        const centerY = o.y + o.height * 0.53 + bob;
+        const lean = Math.sin(stepPhase * 1.8 + o.phase) * 0.08;
+
+        if (o.isFlying) {
+          const wingPulse = Math.sin(stepPhase * 4.6 + o.phase) * S(4);
+          const gliderW = Math.max(S(56), Math.floor(o.width * 1.05));
+          const gliderH = Math.max(S(16), Math.floor(o.height * 0.26));
+          const pilotW = Math.max(S(16), Math.floor(bodyW * 0.42));
+          const pilotH = Math.max(S(20), Math.floor(bodyH * 0.44));
+
+          // Ground shadow for the glider pass.
+          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.beginPath();
+          ctx.ellipse(centerX, CANVAS_HEIGHT - S(6), gliderW * 0.34, S(4), 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.save();
+          ctx.translate(centerX, centerY - S(4));
+          ctx.rotate(Math.sin(stepPhase * 1.6 + o.phase) * 0.06);
+
+          // Paper glider wing.
+          ctx.fillStyle = '#ece6dd';
+          ctx.beginPath();
+          ctx.moveTo(-gliderW * 0.5, -gliderH * 0.1);
+          ctx.lineTo(-gliderW * 0.12, -gliderH - wingPulse * 0.25);
+          ctx.lineTo(gliderW * 0.12, -gliderH - wingPulse * 0.25);
+          ctx.lineTo(gliderW * 0.5, -gliderH * 0.1);
+          ctx.lineTo(gliderW * 0.36, gliderH * 0.2);
+          ctx.lineTo(-gliderW * 0.36, gliderH * 0.2);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = '#b8afa2';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Glider fold lines.
+          ctx.strokeStyle = '#d1c8bb';
+          ctx.beginPath();
+          ctx.moveTo(-gliderW * 0.3, -gliderH * 0.16);
+          ctx.lineTo(0, -gliderH * 0.75);
+          ctx.lineTo(gliderW * 0.3, -gliderH * 0.16);
+          ctx.moveTo(0, -gliderH * 0.75);
+          ctx.lineTo(0, gliderH * 0.2);
+          ctx.stroke();
+
+          // Hanging strings.
+          ctx.strokeStyle = '#7b7266';
+          ctx.beginPath();
+          ctx.moveTo(-gliderW * 0.18, -gliderH * 0.05);
+          ctx.lineTo(-pilotW * 0.36, pilotH * 0.2);
+          ctx.moveTo(gliderW * 0.18, -gliderH * 0.05);
+          ctx.lineTo(pilotW * 0.36, pilotH * 0.2);
+          ctx.stroke();
+
+          // Ninja pilot body.
+          ctx.fillStyle = '#e8e0d4';
+          ctx.fillRect(-pilotW * 0.5, pilotH * 0.05, pilotW, pilotH);
+          ctx.strokeStyle = '#b8afa2';
+          ctx.strokeRect(-pilotW * 0.5, pilotH * 0.05, pilotW, pilotH);
+
+          // Headband and mask.
+          const bandY = pilotH * 0.22 + Math.sin(stepPhase * 5 + o.phase) * S(0.7);
+          ctx.fillStyle = '#c62828';
+          ctx.fillRect(-pilotW * 0.46, bandY, pilotW * 0.92, S(5));
+          ctx.fillStyle = '#23232a';
+          ctx.fillRect(-pilotW * 0.26, bandY + S(1), pilotW * 0.52, S(4));
+
+          // Eyes.
+          ctx.fillStyle = '#fff6a9';
+          ctx.fillRect(-pilotW * 0.18, bandY + S(2), S(3), S(2));
+          ctx.fillRect(pilotW * 0.08, bandY + S(2), S(3), S(2));
+
+          // Small feet tabs to keep paper style.
+          ctx.fillStyle = '#c6bdae';
+          ctx.fillRect(-pilotW * 0.28, pilotH * 1.07, S(5), S(3));
+          ctx.fillRect(pilotW * 0.05, pilotH * 1.07, S(5), S(3));
+
+          ctx.restore();
+          return;
+        }
+
+        // Ground shadow.
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        ctx.ellipse(centerX, CANVAS_HEIGHT - S(6), bodyW * 0.42, S(5), 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Paper ninja body: angular and slightly leaning to look different.
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(lean);
+
+        ctx.fillStyle = '#ece6dd';
+        ctx.beginPath();
+        ctx.moveTo(-bodyW * 0.38, -bodyH * 0.46);
+        ctx.lineTo(bodyW * 0.34, -bodyH * 0.42);
+        ctx.lineTo(bodyW * 0.46, bodyH * 0.05);
+        ctx.lineTo(bodyW * 0.22, bodyH * 0.46);
+        ctx.lineTo(-bodyW * 0.35, bodyH * 0.4);
+        ctx.lineTo(-bodyW * 0.46, -bodyH * 0.03);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = '#b8afa2';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Headband and mask stripe.
+        const bandY = -bodyH * 0.16 + Math.sin(stepPhase * 4 + o.phase) * S(0.8);
+        ctx.fillStyle = '#c62828';
+        ctx.fillRect(-bodyW * 0.35, bandY, bodyW * 0.68, S(9));
+        ctx.fillStyle = '#2a2a31';
+        ctx.fillRect(-bodyW * 0.22, bandY + S(2), bodyW * 0.44, S(6));
+
+        // Eye animation with occasional blink.
+        const blink = Math.sin(stepPhase * 5.2 + o.phase) > 0.92;
+        ctx.fillStyle = '#fff6a9';
+        if (blink) {
+          ctx.fillRect(-bodyW * 0.14, bandY + S(4), S(5), S(1));
+          ctx.fillRect(bodyW * 0.05, bandY + S(4), S(5), S(1));
+        } else {
+          ctx.fillRect(-bodyW * 0.14, bandY + S(3), S(5), S(3));
+          ctx.fillRect(bodyW * 0.05, bandY + S(3), S(5), S(3));
+        }
+
+        // Fold lines so they still read as paper.
+        ctx.strokeStyle = '#d4ccc1';
+        ctx.beginPath();
+        ctx.moveTo(-bodyW * 0.2, -bodyH * 0.28);
+        ctx.lineTo(bodyW * 0.27, -bodyH * 0.03);
+        ctx.moveTo(-bodyW * 0.25, bodyH * 0.15);
+        ctx.lineTo(bodyW * 0.22, bodyH * 0.3);
+        ctx.stroke();
+
+        // Animated scarf tails.
+        const scarfSwing = Math.sin(stepPhase * 4.6 + o.phase) * S(5);
+        ctx.fillStyle = '#d32f2f';
+        ctx.fillRect(bodyW * 0.16, bandY + S(1), S(11), S(3));
+        ctx.fillRect(bodyW * 0.16 + scarfSwing * 0.2, bandY + S(5), S(10), S(3));
+
+        // Arms as folded flaps.
+        const flap = Math.sin(stepPhase * 3.5 + o.phase) * S(3);
+        ctx.fillStyle = '#e5ddd2';
+        ctx.fillRect(-bodyW * 0.5, -S(2), S(8), S(16));
+        ctx.fillRect(bodyW * 0.38 + flap * 0.2, -S(4), S(8), S(16));
+
+        // Paper blade swipe animation on the right side.
+        const slashX = bodyW * 0.56;
+        const slashY = -S(2) + Math.sin(stepPhase * 6 + o.phase) * S(2);
+        ctx.strokeStyle = '#f8f8f3';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(slashX, slashY);
+        ctx.lineTo(slashX + S(14), slashY - S(7));
+        ctx.stroke();
+
+        // Feet tabs.
+        ctx.fillStyle = '#c6bdae';
+        ctx.fillRect(-S(11), bodyH * 0.42, S(7), S(4));
+        ctx.fillRect(S(3), bodyH * 0.42, S(7), S(4));
+
+        ctx.restore();
         return;
       }
 
@@ -1183,6 +1624,7 @@
           // Reset for the second cinematic before gameplay resumes.
           score = 0;
           scoreTick = 0;
+          scoreAccumulator = 0;
           flyingSwarmTriggered = false;
           nextDarkPhaseScore = 1000;
           obstacles = [];
@@ -1239,7 +1681,8 @@
       player.height = PLAYER_STAND_HEIGHT;
       player.vy = 0;
       const hover = Math.sin(stepPhase * 0.7) * S(2.1);
-      const targetY = CANVAS_HEIGHT - player.height - GHOST_FLOAT_FROM_GROUND + hover;
+      const superBoost = ultraSuperGhostMode ? S(24) : (superGhostMode ? S(16) : 0);
+      const targetY = CANVAS_HEIGHT - player.height - GHOST_FLOAT_FROM_GROUND - superBoost + hover;
       if (player.y > targetY) {
         player.y = Math.max(targetY, player.y - S(3));
       } else {
@@ -1265,22 +1708,26 @@
       }
     }
 
-    // update dash trails animation
-    for (let i = dashTrails.length - 1; i >= 0; i--) {
-      const t = dashTrails[i];
-      t.x += 2; // shorter trail movement so animation stays tighter
-      t.alpha -= 0.1; // fade faster so it does not stretch too long
-      if (t.alpha <= 0) dashTrails.splice(i, 1);
-    }
-    // if still dashing, spawn more trails each update to animate
-    if (isDashing) {
-      dashTrailTick++;
-      if (dashTrailTick % DASH_TRAIL_SPAWN_RATE === 0) {
-        const yPos = player.y + player.height/2;
-        const wobble = Math.sin(stepPhase * 3) * 1.5;
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET - 6 + wobble, len: DASH_TRAIL_SHORT, alpha: 1 });
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + wobble, len: DASH_TRAIL_LONG, alpha: 1 });
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + 6 + wobble, len: DASH_TRAIL_SHORT, alpha: 1 });
+    // update dash trails animation (disabled for powered ghost tiers)
+    if (ghostMode && (superGhostMode || ultraSuperGhostMode)) {
+      dashTrails = [];
+    } else {
+      for (let i = dashTrails.length - 1; i >= 0; i--) {
+        const t = dashTrails[i];
+        t.x += 2; // shorter trail movement so animation stays tighter
+        t.alpha -= 0.1; // fade faster so it does not stretch too long
+        if (t.alpha <= 0) dashTrails.splice(i, 1);
+      }
+      // if still dashing, spawn more trails each update to animate
+      if (isDashing) {
+        dashTrailTick++;
+        if (dashTrailTick % DASH_TRAIL_SPAWN_RATE === 0) {
+          const yPos = player.y + player.height/2;
+          const wobble = Math.sin(stepPhase * 3) * 1.5;
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET - 6 + wobble, len: DASH_TRAIL_SHORT, alpha: 1 });
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + wobble, len: DASH_TRAIL_LONG, alpha: 1 });
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + 6 + wobble, len: DASH_TRAIL_SHORT, alpha: 1 });
+        }
       }
     }
 
@@ -1392,6 +1839,7 @@
     running = true;
     score = 0;
     scoreTick = 0;
+    scoreAccumulator = 0;
     nextDarkPhaseScore = 1000;
     darkPhaseActive = false;
     endSequenceActive = false;
@@ -1399,15 +1847,22 @@
     endPlayerVisible = true;
     endCarHasPlayer = false;
     dropCarHasPlayer = true;
+    iKeyDown = false;
+    nKeyDown = false;
     gKeyDown = false;
-    fKeyDown = false;
-    gfComboLatched = false;
     hKeyDown = false;
+    fKeyDown = false;
+    rKeyDown = false;
     ghostMode = false;
+    superGhostMode = false;
+    ultraSuperGhostMode = false;
+    inComboLatched = false;
     ghComboLatched = false;
+    frComboLatched = false;
     ghostGraceUntilMs = 0;
     modeSwitchAnimStartMs = 0;
     modeSwitchAnimType = null;
+    superGhostTransformStartMs = 0;
     flyingSwarmTriggered = false;
     bKeyDown = false;
     lKeyDown = false;
@@ -1488,50 +1943,74 @@
   }
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'i' || e.key === 'I') iKeyDown = true;
+    if (e.key === 'n' || e.key === 'N') nKeyDown = true;
     if (e.key === 'g' || e.key === 'G') gKeyDown = true;
     if (e.key === 'h' || e.key === 'H') hKeyDown = true;
     if (e.key === 'f' || e.key === 'F') fKeyDown = true;
+    if (e.key === 'r' || e.key === 'R') rKeyDown = true;
     if (e.key === 'b' || e.key === 'B') bKeyDown = true;
     if (e.key === 'l' || e.key === 'L') lKeyDown = true;
 
     if (bKeyDown && lKeyDown && !blComboLatched) {
-      // hidden shortcut: reset all-time high score (A.T.H.S.)
+      // hidden shortcut: reset both daily and all-time highs globally
       blComboLatched = true;
       if (highScoreSyncTimer) {
         clearTimeout(highScoreSyncTimer);
         highScoreSyncTimer = null;
       }
+      dailyHighScore = 0;
       allTimeHighScore = 0;
+      persistDailyHigh();
       persistAllTimeHigh();
-      resetAllTimeHighInDb();
+      resetAllHighsInDb();
       draw();
     }
 
-    if (gKeyDown && hKeyDown && !ghComboLatched) {
+    if (iKeyDown && nKeyDown && !inComboLatched) {
       // hidden shortcut: toggle ghost mode.
-      ghComboLatched = true;
+      inComboLatched = true;
       if (ghostMode) {
         ghostMode = false;
+        superGhostMode = false;
+        ultraSuperGhostMode = false;
+        superGhostTransformStartMs = 0;
         player.vy = 0;
         startGhostExitGracePeriod();
         startModeSwitchAnimation('to-normal');
       } else {
         ghostMode = true;
+        superGhostMode = false;
+        ultraSuperGhostMode = false;
+        frComboLatched = false;
+        superGhostTransformStartMs = 0;
         ghostGraceUntilMs = 0;
         isDucking = false;
+        dashTrails = [];
         player.height = PLAYER_STAND_HEIGHT;
         player.vy = 0;
         startModeSwitchAnimation('to-ghost');
       }
     }
 
-    if (running && !endSequenceActive && gKeyDown && fKeyDown && !gfComboLatched) {
-      // hidden shortcut: jump straight to ending score/sequence
-      gfComboLatched = true;
-      score = END_SCORE;
-      updateHighScoresIfNeeded();
-      triggerEndSequence();
-      return;
+    if (ghostMode && gKeyDown && hKeyDown && !ghComboLatched) {
+      // G+H toggles super ghost mode.
+      ghComboLatched = true;
+      if (!superGhostMode) {
+        superGhostMode = true;
+        ultraSuperGhostMode = false;
+      } else {
+        superGhostMode = false;
+        ultraSuperGhostMode = false;
+      }
+      superGhostTransformStartMs = Date.now();
+    }
+
+    if (ghostMode && superGhostMode && fKeyDown && rKeyDown && !frComboLatched) {
+      // F+R activates ultra super ghost from super ghost mode.
+      frComboLatched = true;
+      ultraSuperGhostMode = true;
+      superGhostTransformStartMs = Date.now();
     }
 
     if (running) {
@@ -1555,11 +2034,13 @@
         // initiate sprint while right arrow is held
         isDashing = true;
         dashTrailTick = 0;
-        // spawn initial trails
-        const yPos = player.y + player.height/2;
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET - 6, len: DASH_TRAIL_SHORT, alpha: 1 });
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET, len: DASH_TRAIL_LONG, alpha: 1 });
-        dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + 6, len: DASH_TRAIL_SHORT, alpha: 1 });
+        if (!(ghostMode && (superGhostMode || ultraSuperGhostMode))) {
+          // spawn initial trails
+          const yPos = player.y + player.height/2;
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET - 6, len: DASH_TRAIL_SHORT, alpha: 1 });
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET, len: DASH_TRAIL_LONG, alpha: 1 });
+          dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + 6, len: DASH_TRAIL_SHORT, alpha: 1 });
+        }
       }
     } else {
       if (deathExploding) return;
@@ -1571,11 +2052,15 @@
   });
 
   document.addEventListener('keyup', (e) => {
+    if (e.key === 'i' || e.key === 'I') iKeyDown = false;
+    if (e.key === 'n' || e.key === 'N') nKeyDown = false;
     if (e.key === 'g' || e.key === 'G') gKeyDown = false;
     if (e.key === 'h' || e.key === 'H') hKeyDown = false;
     if (e.key === 'f' || e.key === 'F') fKeyDown = false;
-    if (!gKeyDown || !fKeyDown) gfComboLatched = false;
+    if (e.key === 'r' || e.key === 'R') rKeyDown = false;
+    if (!iKeyDown || !nKeyDown) inComboLatched = false;
     if (!gKeyDown || !hKeyDown) ghComboLatched = false;
+    if (!fKeyDown || !rKeyDown) frComboLatched = false;
     if (e.key === 'b' || e.key === 'B') bKeyDown = false;
     if (e.key === 'l' || e.key === 'L') lKeyDown = false;
     if (!bKeyDown || !lKeyDown) blComboLatched = false;
@@ -1628,9 +2113,12 @@
   scoreTimer = setInterval(() => {
     if (running && !endSequenceActive) {
       scoreTick++;
-      // slower global score gain for both running and dashing
-      if (scoreTick % 4 === 0) {
-        score += getCurrentSpeedMultiplier(); // every 40ms, scaled by movement speed
+      // Score follows player speed state: slow on walk, faster on sprint/forms.
+      scoreAccumulator += SCORE_BASE_RATE_PER_TICK * getCurrentSpeedMultiplier();
+      const gained = Math.floor(scoreAccumulator);
+      if (gained > 0) {
+        scoreAccumulator -= gained;
+        score += gained;
         updateHighScoresIfNeeded();
         if (!endSequenceActive && score >= END_SCORE) {
           score = END_SCORE;
