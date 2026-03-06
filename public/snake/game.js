@@ -8,7 +8,7 @@
   const APPLE_SCORE = 100;
   const BONUS_SCORE = 300;
   const BONUS_INTERVAL = 20000; // 20 seconds
-  const BONUS_DURATION = 5000;  // 5 seconds
+  const BONUS_DURATION = 6500;  // 6.5 seconds
 
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
@@ -276,17 +276,14 @@
     // Draw snake (gradient: bright head → darker tail)
     snake.forEach((seg, i) => {
       const isHead = i === 0;
-      let fillColor;
-      if (isHead) {
-          fillColor = '#39e639'; // Bright green for the head
-      } else {
-          const t = snake.length > 1 ? (i - 1) / (snake.length - 1) : 0;
-          // Gradient from bright green to dark green
-          const r = Math.round(57 - t * 20); // 39 to 19
-          const g = Math.round(230 - t * 80); // 230 to 150
-          const b = Math.round(57 - t * 20); // 39 to 19
-          fillColor = `rgb(${r},${g},${b})`;
-      }
+      // Gradient: head is #00A86B, tail gets darker
+      const baseColor = { r: 0, g: 168, b: 107 };
+      const t = snake.length > 1 ? i / (snake.length - 1) : 0;
+      // Darken by reducing green and blue as t increases
+      const r = baseColor.r;
+      const g = Math.round(baseColor.g * (1 - 0.35 * t)); // up to 35% darker
+      const b = Math.round(baseColor.b * (1 - 0.35 * t));
+      let fillColor = `rgb(${r},${g},${b})`;
       ctx.fillStyle = fillColor;
       const padding = 1;
       ctx.fillRect(
