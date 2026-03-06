@@ -24,6 +24,9 @@
   const END_DROP_CAR_APPROACH_MS = 1800;
   const END_DROP_CAR_STOP_MS = 1000;
   const END_DROP_CAR_EXIT_SPEED = S(5.5);
+  const PAPERWORK_MODE_SCORE = 2000;
+  const FLYING_SWARM_SCORE = 1500;
+  const DEATH_EXPLOSION_MS = 900;
   const END_CAR_W = S(126);
   const END_CAR_H = S(62);
   const HUD_X = 16;
@@ -36,6 +39,9 @@
   const DINO_HIGHS_API_URL = '/api/running-dino-highscores';
   const PLAYER_STAND_HEIGHT = S(60);
   const PLAYER_DUCK_HEIGHT = S(38);
+  const GHOST_FLOAT_FROM_GROUND = S(44);
+  const GHOST_EXIT_GRACE_MS = 5000;
+  const MODE_SWITCH_ANIM_MS = 700;
   const DINO_SPECIES = [
     { name: 'Tyrannosaurus rex', archetype: 'theropod' },
     { name: 'Triceratops', archetype: 'horned' },
@@ -58,6 +64,12 @@
     { name: 'Utahraptor', archetype: 'raptor' },
     { name: 'Argentinosaurus', archetype: 'longneck' }
   ];
+
+  const DINO_SPECIES_BY_SIZE = DINO_SPECIES.reduce((acc, species) => {
+    const sizeClass = getSpeciesSizeClass(species);
+    acc[sizeClass].push(species);
+    return acc;
+  }, { small: [], medium: [], big: [] });
 
   let obstacleTimer = 0;
   let obstacles = []; // { x, y, width, height, color, phase, species, archetype, isFlying, mark }
@@ -90,11 +102,22 @@
   let dropCarStopX = 0;
   let dropCarHasPlayer = true;
   let gKeyDown = false;
+  let hKeyDown = false;
   let fKeyDown = false;
   let gfComboLatched = false;
+  let ghostMode = false;
+  let ghComboLatched = false;
+  let ghostGraceUntilMs = 0;
+  let modeSwitchAnimStartMs = 0;
+  let modeSwitchAnimType = null;
+  let flyingSwarmTriggered = false;
   let bKeyDown = false;
   let lKeyDown = false;
   let blComboLatched = false;
+  let playerRespawnPending = false;
+  let deathExploding = false;
+  let deathExplosionStartMs = 0;
+  let deathDebris = []; // { x, y, vx, vy, size, color }
   let dashTrails = []; // { x, y, len, alpha }
   let dashTrailTick = 0;
 
@@ -333,6 +356,86 @@
     }, 10000);
   }
 
+  function getSpeciesSizeClass(species) {
+    if (species.isFlying || species.archetype === 'raptor') return 'small';
+    if (species.archetype === 'longneck') return 'big';
+    return 'medium';
+  }
+
+  function pickRandomSpeciesBySize(sizeClass) {
+    const list = DINO_SPECIES_BY_SIZE[sizeClass];
+    if (list && list.length > 0) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+    // Fallback safeguard in case size buckets are edited later.
+    return DINO_SPECIES[Math.floor(Math.random() * DINO_SPECIES.length)];
+  }
+
+  function buildWaveSizePlan() {
+    const roll = Math.random();
+
+    // user requested max packs: up to 3 small, up to 2 medium, or 1 big + 1 small
+    if (roll < 0.45) {
+      const count = 1 + Math.floor(Math.random() * 3);
+      return Array(count).fill('small');
+    }
+
+    if (roll < 0.8) {
+      const count = 1 + Math.floor(Math.random() * 2);
+      return Array(count).fill('medium');
+    }
+
+    return ['big', 'small'];
+  }
+
+  function getCurrentSpeedMultiplier() {
+    let mult = isDashing ? DASH_SPEED_MULT : 1;
+    if (ghostMode && isDashing) {
+      mult *= 2;
+    }
+    return mult;
+  }
+
+  function spawnFlyingSwarmWave() {
+    const flyingSpecies = DINO_SPECIES_BY_SIZE.small.filter(s => s.isFlying);
+    if (flyingSpecies.length === 0) return;
+
+    // Clear current hazards so the swarm moment reads clearly.
+    obstacles = [];
+
+    const swarmCount = 9;
+    const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+    let spawnX = CANVAS_WIDTH + S(24);
+    for (let i = 0; i < swarmCount; i++) {
+      const species = flyingSpecies[Math.floor(Math.random() * flyingSpecies.length)];
+      const h = S(30) + Math.random() * S(10);
+      const w = S(54) + Math.random() * S(14);
+
+      // Place the flock low enough that standing collides but ducking can pass under.
+      const duckPassBottom = groundY - PLAYER_DUCK_HEIGHT - S(4 + Math.random() * 3);
+      const y = duckPassBottom - h;
+
+      const flyingColors = ['#5d4037', '#4e342e', '#6d4c41'];
+      obstacles.push({
+        x: spawnX,
+        y,
+        width: w,
+        height: h,
+        color: flyingColors[Math.floor(Math.random() * flyingColors.length)],
+        phase: Math.random() * Math.PI * 2,
+        species: species.name,
+        archetype: species.archetype,
+        isFlying: true,
+        swarmAttack: true
+      });
+
+      // Tight spacing for a "giant group" feeling.
+      spawnX += w + S(10) + Math.random() * S(8);
+    }
+
+    obstacleTimer = 0;
+  }
+
   function triggerEndSequence() {
     endSequenceActive = true;
     endSequenceStartMs = Date.now();
@@ -453,8 +556,82 @@
       height: HUD_ATHS_HEIGHT
     };
 
-    const hidePlayer = endSequenceActive && !endPlayerVisible;
+    const hidePlayer = (endSequenceActive && !endPlayerVisible) || deathExploding || playerRespawnPending;
+    const graceActive = Date.now() < ghostGraceUntilMs;
+    const playerDrawColor = ghostMode ? 'rgba(165,165,165,0.65)' : '#000';
     if (!hidePlayer) {
+      if (graceActive) {
+        const t = (Date.now() % 1000) / 1000;
+        const pulse = (Math.sin(t * Math.PI * 2) + 1) * 0.5;
+        const glowX = player.x + player.width * 0.5;
+        const glowY = player.y + player.height * 0.62;
+
+        ctx.save();
+        ctx.globalAlpha = 0.24 + pulse * 0.2;
+        ctx.fillStyle = '#ffe082';
+        ctx.beginPath();
+        ctx.ellipse(glowX, glowY, S(18) + pulse * S(3), S(28) + pulse * S(4), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      if (ghostMode) {
+        const pulse = (Math.sin(stepPhase * 2.2) + 1) * 0.5;
+        const coreX = player.x + player.width * 0.5;
+        const coreY = player.y + player.height * 0.55;
+
+        ctx.save();
+
+        // Soft aura pulse around the player body.
+        ctx.globalAlpha = 0.2 + pulse * 0.14;
+        ctx.fillStyle = '#d7d7d7';
+        ctx.beginPath();
+        ctx.ellipse(coreX, coreY, S(16) + pulse * S(2), S(26) + pulse * S(4), 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Small wisps under the ghost to make hovering motion readable.
+        ctx.globalAlpha = 0.22 + pulse * 0.12;
+        ctx.fillStyle = '#cfcfcf';
+        for (let i = 0; i < 3; i++) {
+          const t = stepPhase * 2 + i * 1.4;
+          const wispX = player.x + S(5) + i * S(6) + Math.sin(t) * S(1.2);
+          const wispY = player.y + player.height + S(2) + Math.abs(Math.sin(t)) * S(3);
+          const wispW = S(6);
+          const wispH = S(10) + Math.abs(Math.cos(t)) * S(3);
+          ctx.beginPath();
+          ctx.ellipse(wispX, wispY, wispW, wispH, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+
+      if (modeSwitchAnimType && modeSwitchAnimStartMs > 0) {
+        const elapsed = Date.now() - modeSwitchAnimStartMs;
+        if (elapsed < MODE_SWITCH_ANIM_MS) {
+          const life = elapsed / MODE_SWITCH_ANIM_MS;
+          const centerX = player.x + player.width * 0.5;
+          const centerY = player.y + player.height * 0.6;
+          const ringBase = modeSwitchAnimType === 'to-ghost' ? '#a5d6a7' : '#fff176';
+
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, 0.7 - life * 0.7);
+          ctx.strokeStyle = ringBase;
+          ctx.lineWidth = 2 + life * 2;
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, S(16) + life * S(44), 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(centerX, centerY, S(8) + life * S(30), 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          modeSwitchAnimType = null;
+          modeSwitchAnimStartMs = 0;
+        }
+      }
+
       if (isDashing) {
         // two faint afterimages behind the runner for a stronger sprint feel
         ctx.fillStyle = 'rgba(0,0,0,0.18)';
@@ -473,7 +650,7 @@
       ctx.translate(player.x + player.width/2, player.y + player.width/2);
       ctx.rotate(tilt * 0.02);
       ctx.translate(-(player.x + player.width/2), -(player.y + player.width/2));
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = playerDrawColor;
       if (isDucking && player.y >= CANVAS_HEIGHT - player.height - 1) {
         // crouch pose: low torso, tucked head, and compact back
         const crouchBob = Math.abs(Math.sin(stepPhase * 5)) * S(1.5);
@@ -487,7 +664,7 @@
       ctx.restore();
 
       // legs + arms
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = playerDrawColor;
       const legY = isDucking ? (player.y + player.height - S(10)) : (player.y + player.width * 2); // start below body squares
       const legHeight = S(20);
       const legWidth = S(8);
@@ -552,7 +729,7 @@
 
       // dash trail animation drawing
       const dashPulse = 1 + Math.abs(Math.sin(stepPhase * 2.5));
-      ctx.strokeStyle = '#000';
+      ctx.strokeStyle = ghostMode ? 'rgba(170,170,170,0.7)' : '#000';
       ctx.lineWidth = isDashing ? (1.5 + dashPulse) : 2;
       for (const t of dashTrails) {
         ctx.globalAlpha = t.alpha;
@@ -566,6 +743,82 @@
 
     // obstacles: animated dinosaur sprites (facing the player)
     obstacles.forEach(o => {
+      if (score >= PAPERWORK_MODE_SCORE) {
+        const bob = Math.sin(stepPhase * 3 + o.phase) * S(2.2);
+        const bodyW = Math.max(S(34), Math.floor(o.width * 0.66));
+        const bodyH = Math.max(S(44), Math.floor(o.height * 0.7));
+        const bodyX = o.x + (o.width - bodyW) * 0.5;
+        const bodyY = o.y + (o.height - bodyH) * 0.5 + bob;
+
+        // shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.beginPath();
+        ctx.ellipse(bodyX + bodyW * 0.5, CANVAS_HEIGHT - S(6), bodyW * 0.44, S(5), 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // folded paper body
+        ctx.fillStyle = '#f2f2ed';
+        ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
+        ctx.strokeStyle = '#b7b7b0';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bodyX, bodyY, bodyW, bodyH);
+
+        // diagonal fold accents
+        ctx.strokeStyle = '#d0d0c8';
+        ctx.beginPath();
+        ctx.moveTo(bodyX + S(4), bodyY + S(7));
+        ctx.lineTo(bodyX + bodyW - S(6), bodyY + S(2));
+        ctx.moveTo(bodyX + S(3), bodyY + bodyH - S(9));
+        ctx.lineTo(bodyX + bodyW - S(4), bodyY + bodyH - S(4));
+        ctx.stroke();
+
+        // ninja hood band
+        const bandY = bodyY + S(14) + Math.sin(stepPhase * 4 + o.phase) * S(1);
+        ctx.fillStyle = '#2f2f36';
+        ctx.fillRect(bodyX + S(2), bandY, bodyW - S(4), S(10));
+
+        // eyes blink animation
+        const blink = Math.sin(stepPhase * 5 + o.phase) > 0.9;
+        ctx.fillStyle = '#d8f3ff';
+        if (blink) {
+          ctx.fillRect(bodyX + S(11), bandY + S(4), S(6), S(1));
+          ctx.fillRect(bodyX + bodyW - S(17), bandY + S(4), S(6), S(1));
+        } else {
+          ctx.fillRect(bodyX + S(11), bandY + S(3), S(6), S(3));
+          ctx.fillRect(bodyX + bodyW - S(17), bandY + S(3), S(6), S(3));
+        }
+
+        // animated side flaps/arms
+        const armSwing = Math.sin(stepPhase * 4 + o.phase) * S(4);
+        ctx.fillStyle = '#e7e7e1';
+        ctx.fillRect(bodyX - S(5) + armSwing * 0.3, bodyY + S(22), S(7), S(14));
+        ctx.fillRect(bodyX + bodyW - S(2) - armSwing * 0.3, bodyY + S(20), S(7), S(14));
+
+        // spinning paper shuriken near the ninja
+        const starCx = bodyX + bodyW + S(10);
+        const starCy = bodyY + S(16) + Math.sin(stepPhase * 6 + o.phase) * S(2);
+        const spin = stepPhase * 0.45 + o.phase;
+        ctx.save();
+        ctx.translate(starCx, starCy);
+        ctx.rotate(spin);
+        ctx.fillStyle = '#f5f5ef';
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          ctx.rotate(Math.PI / 2);
+          ctx.moveTo(0, 0);
+          ctx.lineTo(S(7), S(2));
+          ctx.lineTo(S(2), 0);
+        }
+        ctx.fill();
+        ctx.restore();
+
+        // little feet tabs
+        ctx.fillStyle = '#c9c9c2';
+        ctx.fillRect(bodyX + S(7), bodyY + bodyH - S(2), S(7), S(4));
+        ctx.fillRect(bodyX + bodyW - S(14), bodyY + bodyH - S(2), S(7), S(4));
+        return;
+      }
+
       const bounce = o.isFlying ? Math.sin(stepPhase * 4 + o.phase) * 2.5 : Math.sin(stepPhase * 2 + o.phase) * 1.8;
       const baseY = o.y + bounce;
       const dinoLegPhase = Math.sin(stepPhase * 3 + o.phase);
@@ -857,11 +1110,47 @@
         ctx.restore();
       }
     }
+
+    // Draw death explosion on top so it is always clearly visible.
+    if (deathExploding) {
+      const elapsed = Date.now() - deathExplosionStartMs;
+      const t = Math.max(0, elapsed / 1000);
+      const life = Math.min(1, elapsed / DEATH_EXPLOSION_MS);
+      const alpha = Math.max(0, 1 - life);
+      const blastScale = 1.35 + life * 2.2;
+
+      ctx.save();
+      // bright flash core at the start
+      ctx.globalAlpha = Math.max(0, 0.35 - life * 0.35);
+      ctx.fillStyle = '#ffd54f';
+      ctx.beginPath();
+      ctx.arc(player.x + player.width, player.y + player.height * 0.8, S(13) * blastScale, 0, Math.PI * 2);
+      ctx.fill();
+
+      // debris burst
+      ctx.globalAlpha = alpha;
+      for (const p of deathDebris) {
+        const px = p.x + p.vx * t;
+        const py = p.y + p.vy * t + 0.5 * 880 * t * t;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(px, py, p.size, p.size);
+      }
+      ctx.restore();
+    }
   }
 
   function update() {
     // always advance step phase so legs animate even if game hasn't started
     stepPhase += 0.2;
+
+    if (deathExploding) {
+      draw();
+      if (Date.now() - deathExplosionStartMs >= DEATH_EXPLOSION_MS) {
+        finalizeGameOver();
+      }
+      return;
+    }
+
     if (!running) {
       draw();
       return;
@@ -894,6 +1183,7 @@
           // Reset for the second cinematic before gameplay resumes.
           score = 0;
           scoreTick = 0;
+          flyingSwarmTriggered = false;
           nextDarkPhaseScore = 1000;
           obstacles = [];
           obstacleTimer = 0;
@@ -944,11 +1234,24 @@
       return;
     }
 
-    player.vy += GRAVITY;
-    player.y += player.vy;
-    if (player.y > CANVAS_HEIGHT - player.height) {
-      player.y = CANVAS_HEIGHT - player.height;
+    if (ghostMode) {
+      isDucking = false;
+      player.height = PLAYER_STAND_HEIGHT;
       player.vy = 0;
+      const hover = Math.sin(stepPhase * 0.7) * S(2.1);
+      const targetY = CANVAS_HEIGHT - player.height - GHOST_FLOAT_FROM_GROUND + hover;
+      if (player.y > targetY) {
+        player.y = Math.max(targetY, player.y - S(3));
+      } else {
+        player.y = targetY;
+      }
+    } else {
+      player.vy += GRAVITY;
+      player.y += player.vy;
+      if (player.y > CANVAS_HEIGHT - player.height) {
+        player.y = CANVAS_HEIGHT - player.height;
+        player.vy = 0;
+      }
     }
 
     // keep hitbox in sync with duck key state when on ground
@@ -982,17 +1285,31 @@
     }
 
     // obstacles movement - speed increases during dash
-    const speed = isDashing ? OBSTACLE_SPEED * DASH_SPEED_MULT : OBSTACLE_SPEED;
-    obstacleTimer++;
-    if (obstacleTimer >= OBSTACLE_INTERVAL) {
+    let speed = OBSTACLE_SPEED * getCurrentSpeedMultiplier();
+    const graceActive = Date.now() < ghostGraceUntilMs;
+
+    if (!flyingSwarmTriggered && score >= FLYING_SWARM_SCORE) {
+      flyingSwarmTriggered = true;
+      spawnFlyingSwarmWave();
+    }
+
+    let swarmAttackActive = obstacles.some(o => o.swarmAttack);
+    if (swarmAttackActive) {
+      // During flight attack, keep only the swarm and block all other dino types.
+      obstacles = obstacles.filter(o => o.swarmAttack);
+      swarmAttackActive = true;
+    }
+
+    if (!graceActive && !swarmAttackActive) {
+      obstacleTimer++;
+    }
+    if (!graceActive && !swarmAttackActive && obstacleTimer >= OBSTACLE_INTERVAL) {
       obstacleTimer = 0;
 
-      // random pack size per wave (1-2 dinos)
-      const roll = Math.random();
-      const spawnCount = roll < 0.35 ? 1 : 2;
+      const sizePlan = buildWaveSizePlan();
       let spawnX = CANVAS_WIDTH;
-      for (let i = 0; i < spawnCount; i++) {
-        const species = DINO_SPECIES[Math.floor(Math.random() * DINO_SPECIES.length)];
+      for (let i = 0; i < sizePlan.length; i++) {
+        const species = pickRandomSpeciesBySize(sizePlan[i]);
         const isFlying = !!species.isFlying;
 
         let h = S(46) + Math.random() * S(20);
@@ -1035,26 +1352,30 @@
           isFlying
         });
 
-        // keep enough spacing so jumps are possible even in 3-dino packs
-        spawnX += w + 70 + Math.random() * 50;
+        // tighter group spacing so waves feel more compact
+        spawnX += w + 26 + Math.random() * 18;
       }
     }
-    obstacles.forEach(o => {
-      o.x -= speed;
-    });
+    if (!graceActive) {
+      obstacles.forEach(o => {
+        o.x -= speed;
+      });
+    }
     obstacles = obstacles.filter(o => o.x + o.width > 0);
 
     // collision
-    for (const o of obstacles) {
-      const obstacleY = o.y;
-      if (
-        player.x < o.x + o.width &&
-        player.x + player.width > o.x &&
-        player.y < obstacleY + o.height &&
-        player.y + player.height > obstacleY
-      ) {
-        endGame();
-        break;
+    if (!ghostMode && !graceActive) {
+      for (const o of obstacles) {
+        const obstacleY = o.y;
+        if (
+          player.x < o.x + o.width &&
+          player.x + player.width > o.x &&
+          player.y < obstacleY + o.height &&
+          player.y + player.height > obstacleY
+        ) {
+          startDeathExplosion();
+          break;
+        }
       }
     }
     draw();
@@ -1081,9 +1402,19 @@
     gKeyDown = false;
     fKeyDown = false;
     gfComboLatched = false;
+    hKeyDown = false;
+    ghostMode = false;
+    ghComboLatched = false;
+    ghostGraceUntilMs = 0;
+    modeSwitchAnimStartMs = 0;
+    modeSwitchAnimType = null;
+    flyingSwarmTriggered = false;
     bKeyDown = false;
     lKeyDown = false;
     blComboLatched = false;
+    playerRespawnPending = false;
+    deathExploding = false;
+    deathDebris = [];
     if (darkPhaseTimer) {
       clearTimeout(darkPhaseTimer);
       darkPhaseTimer = null;
@@ -1107,12 +1438,58 @@
     overlay.classList.remove('hidden');
   }
 
+  function startDeathExplosion() {
+    if (deathExploding) return;
+    deathExploding = true;
+    playerRespawnPending = true;
+    deathExplosionStartMs = Date.now();
+    running = false;
+    overlay.classList.add('hidden');
+
+    const centerX = player.x + player.width;
+    const centerY = player.y + player.height * 0.8;
+    deathDebris = [];
+    for (let i = 0; i < 16; i++) {
+      const angle = (Math.PI * 2 * i) / 16 + (Math.random() - 0.5) * 0.35;
+      const speed = 160 + Math.random() * 230;
+      const debrisColors = ['#111111', '#2b2b2b', '#ff6f00', '#ffca28'];
+      deathDebris.push({
+        x: centerX + (Math.random() - 0.5) * 8,
+        y: centerY + (Math.random() - 0.5) * 8,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 130,
+        size: 9 + Math.random() * 14,
+        color: debrisColors[Math.floor(Math.random() * debrisColors.length)]
+      });
+    }
+  }
+
+  function finalizeGameOver() {
+    if (!deathExploding) return;
+    deathExploding = false;
+    deathDebris = [];
+    endGame();
+  }
+
   function isInsideRect(px, py, rect) {
     return px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height;
   }
 
+  function startModeSwitchAnimation(type) {
+    modeSwitchAnimType = type;
+    modeSwitchAnimStartMs = Date.now();
+  }
+
+  function startGhostExitGracePeriod() {
+    ghostGraceUntilMs = Date.now() + GHOST_EXIT_GRACE_MS;
+    // Restart obstacle flow after grace so dino waves come back cleanly.
+    obstacles = [];
+    obstacleTimer = 0;
+  }
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'g' || e.key === 'G') gKeyDown = true;
+    if (e.key === 'h' || e.key === 'H') hKeyDown = true;
     if (e.key === 'f' || e.key === 'F') fKeyDown = true;
     if (e.key === 'b' || e.key === 'B') bKeyDown = true;
     if (e.key === 'l' || e.key === 'L') lKeyDown = true;
@@ -1128,6 +1505,24 @@
       persistAllTimeHigh();
       resetAllTimeHighInDb();
       draw();
+    }
+
+    if (gKeyDown && hKeyDown && !ghComboLatched) {
+      // hidden shortcut: toggle ghost mode.
+      ghComboLatched = true;
+      if (ghostMode) {
+        ghostMode = false;
+        player.vy = 0;
+        startGhostExitGracePeriod();
+        startModeSwitchAnimation('to-normal');
+      } else {
+        ghostMode = true;
+        ghostGraceUntilMs = 0;
+        isDucking = false;
+        player.height = PLAYER_STAND_HEIGHT;
+        player.vy = 0;
+        startModeSwitchAnimation('to-ghost');
+      }
     }
 
     if (running && !endSequenceActive && gKeyDown && fKeyDown && !gfComboLatched) {
@@ -1167,6 +1562,7 @@
         dashTrails.push({ x: player.x - DASH_TRAIL_X_OFFSET, y: yPos - DASH_TRAIL_Y_OFFSET + 6, len: DASH_TRAIL_SHORT, alpha: 1 });
       }
     } else {
+      if (deathExploding) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         startGame();
@@ -1176,8 +1572,10 @@
 
   document.addEventListener('keyup', (e) => {
     if (e.key === 'g' || e.key === 'G') gKeyDown = false;
+    if (e.key === 'h' || e.key === 'H') hKeyDown = false;
     if (e.key === 'f' || e.key === 'F') fKeyDown = false;
     if (!gKeyDown || !fKeyDown) gfComboLatched = false;
+    if (!gKeyDown || !hKeyDown) ghComboLatched = false;
     if (e.key === 'b' || e.key === 'B') bKeyDown = false;
     if (e.key === 'l' || e.key === 'L') lKeyDown = false;
     if (!bKeyDown || !lKeyDown) blComboLatched = false;
@@ -1206,7 +1604,7 @@
   window.addEventListener('resize', resizeCanvas);
 
   canvas.addEventListener('mousedown', () => {
-    if (!running) startGame();
+    if (!running && !deathExploding) startGame();
   });
   canvas.addEventListener('click', (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -1232,7 +1630,7 @@
       scoreTick++;
       // slower global score gain for both running and dashing
       if (scoreTick % 4 === 0) {
-        score += 1; // every 40ms
+        score += getCurrentSpeedMultiplier(); // every 40ms, scaled by movement speed
         updateHighScoresIfNeeded();
         if (!endSequenceActive && score >= END_SCORE) {
           score = END_SCORE;
