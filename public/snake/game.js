@@ -37,12 +37,6 @@
   let running = false;
   let speedBoostStacks = 0;
   let nextSpeedBoostScore = 1000;
-  let rKeyDown = false;
-  let dKeyDown = false;
-  let fKeyDown = false;
-  let gKeyDown = false;
-  let fgComboLatched = false;
-  let rdComboLatched = false;
   let playerName = '';
   let currentPlayerName = '';
 
@@ -146,12 +140,6 @@
     speedBoosts = [];
     speedBoostStacks = 0;
     nextSpeedBoostScore = 1000;
-    rKeyDown = false;
-    dKeyDown = false;
-    fKeyDown = false;
-    gKeyDown = false;
-    fgComboLatched = false;
-    rdComboLatched = false;
     scoreDisplay.textContent = '0';
     clearBonusTimers();
     spawnApple();
@@ -589,24 +577,6 @@
       return;
     }
 
-    const lower = e.key.toLowerCase();
-    if (lower === 'r') rKeyDown = true;
-    if (lower === 'd') dKeyDown = true;
-    if (lower === 'f') fKeyDown = true;
-    if (lower === 'g') gKeyDown = true;
-
-    // Hidden combo: F+G spawns a bonus star immediately.
-    if (fKeyDown && gKeyDown && !fgComboLatched) {
-      fgComboLatched = true;
-      spawnBonus();
-    }
-
-    // Hidden combo: R+D spawns a speed boost immediately.
-    if (rKeyDown && dKeyDown && !rdComboLatched) {
-      rdComboLatched = true;
-      spawnSpeedBoost();
-    }
-
     const key = e.key;
     let newDir = null;
 
@@ -630,16 +600,6 @@
     }
 
     nextDirection = newDir;
-  });
-
-  document.addEventListener('keyup', (e) => {
-    const lower = e.key.toLowerCase();
-    if (lower === 'r') rKeyDown = false;
-    if (lower === 'd') dKeyDown = false;
-    if (lower === 'f') fKeyDown = false;
-    if (lower === 'g') gKeyDown = false;
-    if (!fKeyDown || !gKeyDown) fgComboLatched = false;
-    if (!rKeyDown || !dKeyDown) rdComboLatched = false;
   });
 
   // --- Events ---

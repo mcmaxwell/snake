@@ -5,6 +5,7 @@
   const S = (n) => Math.round(n * CHAR_SCALE);
   const GRAVITY = 0.6;
   const JUMP_VELOCITY = -16;
+  const HIGH_JUMP_VELOCITY = -22;
   const OBSTACLE_INTERVAL = 85; // frames between obstacles (more frequent)
   const OBSTACLE_SPEED = 5.4;
   const DASH_SPEED_MULT = 2;
@@ -79,6 +80,7 @@
 
   let obstacleTimer = 0;
   let obstacles = []; // { x, y, width, height, color, phase, species, archetype, isFlying, mark }
+  let baseObstacleSpawnCount = 0;
   let isDashing = false;
   let isDucking = false;
   let score = 0;
@@ -128,6 +130,9 @@
   let bKeyDown = false;
   let lKeyDown = false;
   let blComboLatched = false;
+  let jKeyDown = false;
+  let uKeyDown = false;
+  let juComboLatched = false;
   let playerRespawnPending = false;
   let deathExploding = false;
   let deathExplosionStartMs = 0;
@@ -362,12 +367,21 @@
   });
 
   function triggerDarkPhase() {
+    if (ghostMode) return;
     darkPhaseActive = true;
     if (darkPhaseTimer) clearTimeout(darkPhaseTimer);
     darkPhaseTimer = setTimeout(() => {
       darkPhaseActive = false;
       darkPhaseTimer = null;
     }, 4000);
+  }
+
+  function clearDarkPhase() {
+    darkPhaseActive = false;
+    if (darkPhaseTimer) {
+      clearTimeout(darkPhaseTimer);
+      darkPhaseTimer = null;
+    }
   }
 
   function getSpeciesSizeClass(species) {
@@ -911,7 +925,9 @@
 
     // obstacles: animated dinosaur sprites (facing the player)
     obstacles.forEach(o => {
-      if (score >= GHOST_OBSTACLE_MODE_SCORE) {
+      const obstacleThemeStage = Math.floor(score / 2000) % 4;
+
+      if (score >= PAPERWORK_MODE_SCORE && obstacleThemeStage === 3) {
         const bob = Math.sin(stepPhase * 2.4 + o.phase) * S(2.4);
         const centerX = o.x + o.width * 0.5;
         const centerY = o.y + o.height * 0.5 + bob;
@@ -971,7 +987,7 @@
         return;
       }
 
-      if (score >= COOKIE_MODE_SCORE) {
+      if (score >= PAPERWORK_MODE_SCORE && obstacleThemeStage === 2) {
         const bob = Math.sin(stepPhase * 2.9 + o.phase) * S(1.4);
         const centerX = o.x + o.width * 0.5;
         const centerY = o.y + o.height * 0.53 + bob;
@@ -1089,7 +1105,7 @@
         return;
       }
 
-      if (score >= PAPERWORK_MODE_SCORE) {
+      if (score >= PAPERWORK_MODE_SCORE && obstacleThemeStage === 1) {
         const bob = Math.sin(stepPhase * 2.7 + o.phase) * S(1.8);
         const bodyW = Math.max(S(36), Math.floor(o.width * 0.68));
         const bodyH = Math.max(S(46), Math.floor(o.height * 0.74));
@@ -1625,6 +1641,7 @@
           score = 0;
           scoreTick = 0;
           scoreAccumulator = 0;
+          baseObstacleSpawnCount = 0;
           flyingSwarmTriggered = false;
           nextDarkPhaseScore = 1000;
           obstacles = [];
@@ -1735,22 +1752,10 @@
     let speed = OBSTACLE_SPEED * getCurrentSpeedMultiplier();
     const graceActive = Date.now() < ghostGraceUntilMs;
 
-    if (!flyingSwarmTriggered && score >= FLYING_SWARM_SCORE) {
-      flyingSwarmTriggered = true;
-      spawnFlyingSwarmWave();
-    }
-
-    let swarmAttackActive = obstacles.some(o => o.swarmAttack);
-    if (swarmAttackActive) {
-      // During flight attack, keep only the swarm and block all other dino types.
-      obstacles = obstacles.filter(o => o.swarmAttack);
-      swarmAttackActive = true;
-    }
-
-    if (!graceActive && !swarmAttackActive) {
+    if (!graceActive) {
       obstacleTimer++;
     }
-    if (!graceActive && !swarmAttackActive && obstacleTimer >= OBSTACLE_INTERVAL) {
+    if (!graceActive && obstacleTimer >= OBSTACLE_INTERVAL) {
       obstacleTimer = 0;
 
       const sizePlan = buildWaveSizePlan();
@@ -1787,6 +1792,7 @@
         const y = isFlying
           ? (CANVAS_HEIGHT - GROUND_HEIGHT - h - (85 + Math.random() * 40))
           : (CANVAS_HEIGHT - h);
+
         obstacles.push({
           x: spawnX,
           y,
@@ -1798,6 +1804,7 @@
           archetype: species.archetype,
           isFlying
         });
+        baseObstacleSpawnCount++;
 
         // tighter group spacing so waves feel more compact
         spawnX += w + 26 + Math.random() * 18;
@@ -1828,9 +1835,9 @@
     draw();
   }
 
-  function jump() {
+  function jump(velocity = JUMP_VELOCITY) {
     if (player.y >= CANVAS_HEIGHT - player.height - 1) {
-      player.vy = JUMP_VELOCITY;
+      player.vy = velocity;
     }
   }
 
@@ -1840,6 +1847,7 @@
     score = 0;
     scoreTick = 0;
     scoreAccumulator = 0;
+    baseObstacleSpawnCount = 0;
     nextDarkPhaseScore = 1000;
     darkPhaseActive = false;
     endSequenceActive = false;
@@ -1867,6 +1875,9 @@
     bKeyDown = false;
     lKeyDown = false;
     blComboLatched = false;
+    jKeyDown = false;
+    uKeyDown = false;
+    juComboLatched = false;
     playerRespawnPending = false;
     deathExploding = false;
     deathDebris = [];
@@ -1951,6 +1962,8 @@
     if (e.key === 'r' || e.key === 'R') rKeyDown = true;
     if (e.key === 'b' || e.key === 'B') bKeyDown = true;
     if (e.key === 'l' || e.key === 'L') lKeyDown = true;
+    if (e.key === 'j' || e.key === 'J') jKeyDown = true;
+    if (e.key === 'u' || e.key === 'U') uKeyDown = true;
 
     if (bKeyDown && lKeyDown && !blComboLatched) {
       // hidden shortcut: reset both daily and all-time highs globally
@@ -1983,6 +1996,7 @@
         superGhostMode = false;
         ultraSuperGhostMode = false;
         frComboLatched = false;
+        clearDarkPhase();
         superGhostTransformStartMs = 0;
         ghostGraceUntilMs = 0;
         isDucking = false;
@@ -2011,6 +2025,12 @@
       frComboLatched = true;
       ultraSuperGhostMode = true;
       superGhostTransformStartMs = Date.now();
+    }
+
+    if (running && !endSequenceActive && jKeyDown && uKeyDown && !juComboLatched) {
+      // J+U triggers a higher jump.
+      juComboLatched = true;
+      jump(HIGH_JUMP_VELOCITY);
     }
 
     if (running) {
@@ -2063,7 +2083,10 @@
     if (!fKeyDown || !rKeyDown) frComboLatched = false;
     if (e.key === 'b' || e.key === 'B') bKeyDown = false;
     if (e.key === 'l' || e.key === 'L') lKeyDown = false;
+    if (e.key === 'j' || e.key === 'J') jKeyDown = false;
+    if (e.key === 'u' || e.key === 'U') uKeyDown = false;
     if (!bKeyDown || !lKeyDown) blComboLatched = false;
+    if (!jKeyDown || !uKeyDown) juComboLatched = false;
 
     if (e.key === 'ArrowRight') {
       isDashing = false;
@@ -2080,6 +2103,9 @@
   window.addEventListener('blur', () => {
     isDashing = false;
     isDucking = false;
+    jKeyDown = false;
+    uKeyDown = false;
+    juComboLatched = false;
     if (player.height !== PLAYER_STAND_HEIGHT && player.y >= CANVAS_HEIGHT - player.height - 1) {
       player.y -= (PLAYER_STAND_HEIGHT - PLAYER_DUCK_HEIGHT);
       player.height = PLAYER_STAND_HEIGHT;
@@ -2126,7 +2152,9 @@
           return;
         }
         if (score >= nextDarkPhaseScore) {
-          triggerDarkPhase();
+          if (!ghostMode) {
+            triggerDarkPhase();
+          }
           while (score >= nextDarkPhaseScore) {
             nextDarkPhaseScore += 1000;
           }
