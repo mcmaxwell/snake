@@ -539,8 +539,13 @@
   }
 
   function resizeCanvas() {
-    CANVAS_WIDTH = Math.max(640, Math.min(MAX_GAME_WIDTH, Math.floor(window.innerWidth * 0.82)));
-    CANVAS_HEIGHT = Math.max(300, Math.min(MAX_GAME_HEIGHT, Math.floor(window.innerHeight * 0.72)));
+    const maxViewportWidth = Math.floor(window.innerWidth * 0.92);
+    const maxViewportHeight = Math.floor(window.innerHeight * 0.76);
+    const widthFromHeight = Math.floor(maxViewportHeight * (16 / 9));
+    const targetWidth = Math.min(MAX_GAME_WIDTH, maxViewportWidth, widthFromHeight);
+
+    CANVAS_WIDTH = Math.max(320, targetWidth);
+    CANVAS_HEIGHT = Math.max(180, Math.floor(CANVAS_WIDTH * (9 / 16)));
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
     if (!running) {
