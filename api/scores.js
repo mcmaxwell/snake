@@ -9,6 +9,7 @@ async function getCollection() {
   }
   const db = cachedClient.db('snake');
   const collection = db.collection('leaderboard');
+  await collection.createIndex({ player_name: 1, score: -1, created_at: 1 });
   await collection.createIndex({ score: -1, created_at: 1 });
   return collection;
 }
@@ -21,11 +22,27 @@ module.exports = async function handler(req, res) {
       const limitParam = parseInt(req.query.limit) || 10;
       const limit = Math.min(Math.max(limitParam, 1), 100);
 
-      const scores = await collection
-        .find({}, { projection: { _id: 0, player_name: 1, score: 1, created_at: 1 } })
-        .sort({ score: -1, created_at: 1 })
-        .limit(limit)
-        .toArray();
+      // Keep only each player's best historical score in leaderboard output.
+      const scores = await collection.aggregate([
+        { $sort: { score: -1, created_at: 1 } },
+        {
+          $group: {
+            _id: '$player_name',
+            score: { $first: '$score' },
+            created_at: { $first: '$created_at' }
+          }
+        },
+        {
+          $project: {
+            _id: 0,
+            player_name: '$_id',
+            score: 1,
+            created_at: 1
+          }
+        },
+        { $sort: { score: -1, created_at: 1 } },
+        { $limit: limit }
+      ]).toArray();
 
       return res.status(200).json(scores);
     }
@@ -46,20 +63,58 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: 'score must be an integer between 0 and 1000000' });
       }
 
-      const doc = {
-        player_name: trimmed,
-        score,
-        created_at: new Date()
-      };
+      const existing = await collection
+        .find(
+          { player_name: trimmed },
+          { projection: { _id: 1, score: 1, created_at: 1 } }
+        )
+        .sort({ score: -1, created_at: 1 })
+        .limit(1)
+        .next();
 
-      await collection.insertOne(doc);
+      let storedScore = score;
+      let improved = true;
 
-      const rank = await collection.countDocuments({ score: { $gt: score } });
+      if (existing) {
+        if (score > existing.score) {
+          await collection.updateOne(
+            { _id: existing._id },
+            {
+              $set: {
+                score,
+                created_at: new Date()
+              }
+            }
+          );
+        } else {
+          storedScore = existing.score;
+          improved = false;
+        }
+      } else {
+        await collection.insertOne({
+          player_name: trimmed,
+          score,
+          created_at: new Date()
+        });
+      }
+
+      const rankResult = await collection.aggregate([
+        { $sort: { score: -1, created_at: 1 } },
+        {
+          $group: {
+            _id: '$player_name',
+            score: { $first: '$score' }
+          }
+        },
+        { $match: { score: { $gt: storedScore } } },
+        { $count: 'count' }
+      ]).toArray();
+      const rank = rankResult[0] ? rankResult[0].count : 0;
 
       return res.status(201).json({
         player_name: trimmed,
-        score,
-        created_at: doc.created_at,
+        score: storedScore,
+        improved,
         rank: rank + 1
       });
     }
