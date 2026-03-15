@@ -165,6 +165,62 @@ h1 {
   border-color: rgba(192, 255, 231, 0.45);
 }
 
+.upgrades-panel .upgrade-button:nth-of-type(3) {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 253, 203, 0.32), transparent 34%),
+    linear-gradient(180deg, #c0f278, #6cab3f);
+  border-color: rgba(233, 255, 176, 0.5);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(4) {
+  background:
+    radial-gradient(circle at 84% 18%, rgba(225, 255, 245, 0.34), transparent 34%),
+    linear-gradient(180deg, #95efd1, #3ea582);
+  border-color: rgba(198, 255, 238, 0.52);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(5) {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(247, 255, 219, 0.36), transparent 34%),
+    linear-gradient(180deg, #d4f784, #78b63f);
+  border-color: rgba(235, 255, 190, 0.56);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(6) {
+  background:
+    radial-gradient(circle at 82% 20%, rgba(232, 255, 250, 0.34), transparent 36%),
+    linear-gradient(180deg, #aaf4de, #4ab489);
+  border-color: rgba(210, 255, 245, 0.56);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(7) {
+  background:
+    radial-gradient(circle at 14% 20%, rgba(242, 255, 228, 0.36), transparent 36%),
+    linear-gradient(180deg, #dbf8a6, #8ac255);
+  border-color: rgba(232, 255, 197, 0.58);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(8) {
+  background:
+    radial-gradient(circle at 84% 20%, rgba(246, 255, 230, 0.36), transparent 36%),
+    linear-gradient(180deg, #e4fcb5, #93c85a);
+  border-color: rgba(238, 255, 205, 0.6);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(9) {
+  background:
+    radial-gradient(circle at 14% 20%, rgba(250, 255, 236, 0.36), transparent 36%),
+    linear-gradient(180deg, #ecfcc4, #a1d06b);
+  border-color: rgba(244, 255, 218, 0.62);
+}
+
+.upgrades-panel .upgrade-button:nth-of-type(10) {
+  background:
+    radial-gradient(circle at 84% 20%, rgba(245, 255, 238, 0.38), transparent 36%),
+    linear-gradient(180deg, #f0fdcc, #add675);
+  border-color: rgba(246, 255, 221, 0.64);
+}
+
 .upgrade-status {
   margin: 0.55rem 0 0;
   font-size: 0.88rem;

@@ -546,8 +546,13 @@
     pendingScore = null;
 
     let msg = `Score: ${score}`;
-    if (result && result.rank) {
-      msg += ` — Rank #${result.rank}`;
+    if (result) {
+      if (typeof result.score === 'number' && result.score > score) {
+        msg += ` (Best: ${result.score})`;
+      }
+      if (result.rank) {
+        msg += ` — Rank #${result.rank}`;
+      }
     }
 
     overlayMessage.textContent = msg;
